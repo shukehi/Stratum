@@ -1,6 +1,7 @@
 import { env } from "./app/env.js";
 import { logger } from "./app/logger.js";
 import { CcxtClient } from "./clients/exchange/ccxt-client.js";
+import { createLlmClient } from "./clients/llm/llm-client.js";
 import { openDb } from "./services/persistence/init-db.js";
 import { runSignalScan } from "./services/orchestrator/run-signal-scan.js";
 import { runScheduler } from "./services/scheduler/run-scheduler.js";
@@ -24,7 +25,9 @@ import { monitorPositions } from "./services/paper-trading/monitor-positions.js"
  *   SYMBOL              - 合约品种（默认: BTC/USDT:USDT）
  *   SPOT_SYMBOL         - 现货品种（默认: BTC/USDT）
  *   NEWS_API_KEY        - NewsAPI Key（不填则跳过新闻）
- *   LLM_API_KEY         - Anthropic API Key（不填则跳过宏观分析）
+ *   LLM_API_KEY         - LLM API Key（Anthropic 或 OpenRouter，不填则跳过宏观分析）
+ *   LLM_PROVIDER        - "anthropic" | "openrouter"（默认: anthropic）
+ *   LLM_MODEL           - 模型名称（可选，不填则使用 provider 默认值）
  *   DATABASE_URL        - SQLite 路径（默认: ./stratum.db）
  *   ACCOUNT_SIZE        - 账户规模 USD（默认: 10000）
  *   RISK_PER_TRADE      - 单笔风险比例（默认: 0.01 = 1%）
@@ -44,40 +47,12 @@ const shutdown = (sig: string) => {
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));
 
-/**
- * LLM 呼び出し関数（Anthropic Messages API 互換）
- * LLM_API_KEY が未設定の場合は空文字を返す
- * （assess-macro-overlay が confidenceScore=0 → pass にフォールバック）
- */
-async function makeLlmCall(prompt: string): Promise<string> {
-  if (!env.LLM_API_KEY) {
-    logger.debug("LLM_API_KEY not set, skipping macro LLM call");
-    return "";
-  }
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.LLM_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-3-haiku-20240307",
-      max_tokens: 512,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`Anthropic API HTTP ${res.status}: ${res.statusText}`);
-  }
-
-  const data = (await res.json()) as {
-    content: Array<{ type: string; text: string }>;
-  };
-  return data.content.find((c) => c.type === "text")?.text ?? "";
-}
+// LLM 客户端（支持 anthropic / openrouter，LLM_API_KEY 未设置时为 no-op）
+const llmCall = createLlmClient({
+  apiKey: env.LLM_API_KEY,
+  provider: env.LLM_PROVIDER,
+  model: env.LLM_MODEL,
+});
 
 async function main(): Promise<void> {
   const telegramConfig = {
@@ -96,7 +71,7 @@ async function main(): Promise<void> {
   const scanDeps = {
     client,
     db,
-    llmCall: makeLlmCall,
+    llmCall,
     telegramConfig,
     newsApiKey: env.NEWS_API_KEY ?? "",
     fetchNewsFn: fetchNews,

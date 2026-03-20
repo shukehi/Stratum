@@ -5,7 +5,10 @@ const EnvSchema = z.object({
   SYMBOL: z.string().default("BTC/USDT:USDT"),
   SPOT_SYMBOL: z.string().default("BTC/USDT"),
   NEWS_API_KEY: z.string().optional(),
+  // LLM 配置
   LLM_API_KEY: z.string().optional(),
+  LLM_PROVIDER: z.enum(["anthropic", "openrouter"]).default("anthropic"),
+  LLM_MODEL: z.string().optional(), // 不填则按 provider 使用默认模型
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   DATABASE_URL: z.string().default("./stratum.db"),
