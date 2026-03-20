@@ -1,3 +1,62 @@
+/**
+ * StrategyConfig は明示的な型定義を持つ。
+ * boolean / number フィールドは widened 型（テスト時のオーバーライドを許容）。
+ * 文字列 union 型（timeframe）は具体的な値を保持する。
+ *
+ * strategyConfig は `as const satisfies StrategyConfig` で定義することで
+ * リテラル型（literal inference）を維持しつつ、型の互換性チェックも保証する。
+ */
+export type StrategyConfig = {
+  // --- 周期与数据 ---
+  readonly primaryTimeframe: "4h";
+  readonly secondaryTimeframe: "1h";
+  readonly marketDataLimit: number;
+
+  // --- 风险回报 ---
+  readonly minimumRiskReward: number;
+  readonly riskPerTrade: number;
+
+  // --- 市场状态 ---
+  readonly minRegimeConfidence: number;
+  readonly eventDrivenOverrideScore: number;
+  readonly highVolatilityOverrideScore: number;
+  readonly minRegimeScoreGap: number;
+  readonly trendExtensionAtrPenaltyThreshold: number;
+
+  // --- 参与者压力 ---
+  readonly minParticipantConfidence: number;
+  readonly oiCollapseVacuumThresholdPercent: number;
+  readonly basisDivergenceThreshold: number;
+  readonly basisDivergenceConfidenceBoost: number;
+
+  // --- 结构触发 ---
+  readonly liquiditySweepConfirmationTimeframe: "4h";
+  readonly minStructureScore: number;
+  readonly minStructureScoreForWeakParticipantOverride: number;
+  readonly confluenceBonus: number;
+  readonly confirmationShadowRatio: number;
+  readonly confirmationCandles: number;
+
+  // --- 交易时段 ---
+  readonly enableSessionAdjustment: boolean;
+  readonly sessionDiscountFactor: number;
+  readonly sessionPremiumFactor: number;
+
+  // --- 风控门槛 ---
+  readonly maxStopDistanceAtr: number;
+  readonly maxCorrelatedSignalsPerDirection: number;
+
+  // --- 事件与语义 ---
+  readonly recentEventWatchWindowHours: number;
+  readonly minimumMacroConfidence: number;
+  readonly minimumBtcRelevance: number;
+  readonly allowEventDrivenSignals: boolean;
+  readonly maxNewsItemsForPrompt: number;
+
+  // --- 校准 ---
+  readonly calibrationMinSampleSize: number;
+};
+
 export const strategyConfig = {
   // --- 周期与数据 ---
   primaryTimeframe: "4h" as const,
@@ -47,6 +106,4 @@ export const strategyConfig = {
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,
-} as const;
-
-export type StrategyConfig = typeof strategyConfig;
+} as const satisfies StrategyConfig;

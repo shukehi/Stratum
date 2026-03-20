@@ -69,7 +69,7 @@ function rowToPayload(row: CandidateRow): AlertPayload {
     participantRationale: "",
     spotPerpBasis: 0,
     basisDivergence: false,
-    liquiditySession: "new_york_open",
+    liquiditySession: "ny_close",
     summary: "",
     reasonCodes: [],
   };
