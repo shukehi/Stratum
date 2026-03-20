@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { initPositionsDb } from "../positions/init-positions-db.js";
 
 /**
  * DB 初期化  (PHASE_08)
@@ -51,5 +52,6 @@ export function openDb(path: string): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   initDb(db);
+  initPositionsDb(db);
   return db;
 }

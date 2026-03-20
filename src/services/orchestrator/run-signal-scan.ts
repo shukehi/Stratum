@@ -22,6 +22,7 @@ import { saveCandidate, updateAlertStatus } from "../persistence/save-candidate.
 import { findCandidate } from "../persistence/load-candidates.js";
 import { sendAlert } from "../alerting/send-alert.js";
 import { getCurrentSession } from "../../utils/session.js";
+import { countOpenByDirection, openPosition } from "../positions/track-position.js";
 
 /**
  * ワークフロー・オーケストレーター  (PHASE_09)
@@ -169,7 +170,13 @@ export async function runSignalScan(
   logger.debug({ setupCount: setups.length }, "PHASE_05 done");
 
   // ── PHASE_06: コンセンサス & リスクエンジン ───────────────────────────
-  const candidates = evaluateConsensus({ symbol, setups, ctx, config, baselineAtr });
+  // PHASE_10-B: DB から実際の開仓数を取得して相関性暴露制限を実効化
+  const openLongCount = countOpenByDirection(db, "long");
+  const openShortCount = countOpenByDirection(db, "short");
+  const candidates = evaluateConsensus({
+    symbol, setups, ctx, config, baselineAtr,
+    openLongCount, openShortCount,
+  });
   const candidatesFound = candidates.length;
   logger.info({ symbol, candidatesFound }, "PHASE_06 done");
 
@@ -257,6 +264,8 @@ export async function runSignalScan(
 
     if (ok) {
       alertsSent++;
+      // PHASE_10-B: アラート送信成功 → 仓位を記録（相関性暴露カウントを更新）
+      openPosition(db, candidate, scannedAt);
       logger.info(
         { symbol: candidate.symbol, direction: candidate.direction, grade: candidate.signalGrade },
         "Alert sent"

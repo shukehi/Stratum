@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initDb } from "../../../src/services/persistence/init-db.js";
+import { initPositionsDb } from "../../../src/services/positions/init-positions-db.js";
 import { saveCandidate, updateAlertStatus } from "../../../src/services/persistence/save-candidate.js";
 import { runSignalScan } from "../../../src/services/orchestrator/run-signal-scan.js";
 import type { ScanDeps } from "../../../src/services/orchestrator/run-signal-scan.js";
@@ -164,6 +165,7 @@ function makeClient(overrides: Partial<ExchangeClient> = {}): ExchangeClient {
 function makeDeps(overrides: Partial<ScanDeps> = {}): ScanDeps & { db: Database.Database } {
   const freshDb = new Database(":memory:");
   initDb(freshDb);
+  initPositionsDb(freshDb);
   const resolvedDb = (overrides.db ?? freshDb) as Database.Database;
   const base = {
     client: makeClient(),
