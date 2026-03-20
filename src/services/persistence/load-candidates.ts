@@ -3,6 +3,7 @@ import type { AlertPayload } from "../../domain/signal/alert-payload.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { MarketContext } from "../../domain/market/market-context.js";
 import type { ReasonCode } from "../../domain/common/reason-code.js";
+import { buildId } from "./save-candidate.js";
 
 /**
  * 候補読み込み  (PHASE_08)
@@ -103,7 +104,7 @@ export function findCandidate(
   timeframe: "4h" | "1h",
   entryHigh: number
 ): AlertPayload | undefined {
-  const id = `${symbol}_${direction}_${timeframe}_${Math.floor(entryHigh)}`;
+  const id = buildId(symbol, direction, timeframe, entryHigh);
   const row = db
     .prepare("SELECT * FROM candidates WHERE id = ?")
     .get(id) as CandidateRow | undefined;
