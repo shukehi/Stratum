@@ -13,14 +13,19 @@ export interface ExchangeClient {
 
 export class CcxtClient implements ExchangeClient {
   private exchange: any;
+  private spotExchange: any;
   private exchangeName: string;
+  private spotExchangeName: string;
   private spotSymbol: string;
 
   constructor(exchangeName: string, spotSymbol: string) {
     this.exchangeName = exchangeName;
     this.spotSymbol = spotSymbol;
+    // 期货交易所 → 对应现货交易所（binanceusdm → binance）
+    this.spotExchangeName = exchangeName === "binanceusdm" ? "binance" : exchangeName;
     // Lazy init - exchange created on first use
     this.exchange = null;
+    this.spotExchange = null;
   }
 
   private async getExchange(): Promise<any> {
@@ -33,6 +38,18 @@ export class CcxtClient implements ExchangeClient {
       this.exchange = new ExchangeClass({ enableRateLimit: true });
     }
     return this.exchange;
+  }
+
+  private async getSpotExchange(): Promise<any> {
+    if (!this.spotExchange) {
+      const ccxt = await import("ccxt");
+      const ExchangeClass = (ccxt as any)[this.spotExchangeName];
+      if (!ExchangeClass) {
+        throw new Error(`Spot exchange not supported: ${this.spotExchangeName}`);
+      }
+      this.spotExchange = new ExchangeClass({ enableRateLimit: true });
+    }
+    return this.spotExchange;
   }
 
   async fetchOHLCV(symbol: string, timeframe: string, limit: number): Promise<Candle[]> {
@@ -84,7 +101,7 @@ export class CcxtClient implements ExchangeClient {
 
   async fetchSpotTicker(symbol: string): Promise<{ last: number }> {
     try {
-      const ex = await this.getExchange();
+      const ex = await this.getSpotExchange();
       const ticker = await ex.fetchTicker(symbol);
       return { last: Number(ticker.last ?? 0) };
     } catch (err) {
