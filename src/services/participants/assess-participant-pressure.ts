@@ -28,6 +28,19 @@ export function assessParticipantPressure(
   spotPrice: number,
   config: StrategyConfig
 ): ParticipantPressure {
+  // ── 防御性检查 ────────────────────────────────────────────────────────────
+  if (candles.length === 0) {
+    return {
+      bias: "balanced",
+      pressureType: "none",
+      confidence: 40,
+      rationale: "无 K 线数据，无法评估参与者压力",
+      spotPerpBasis: 0,
+      basisDivergence: false,
+      reasonCodes: [],
+    };
+  }
+
   const reasons: string[] = [];
   const reasonCodes: ReasonCode[] = [];
 

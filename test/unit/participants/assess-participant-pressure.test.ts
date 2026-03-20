@@ -211,6 +211,17 @@ describe("assessParticipantPressure — 输出契约", () => {
     const result = assessParticipantPressure(candles, funding, oi, 0, strategyConfig);
     expect(result.rationale.length).toBeGreaterThan(0);
   });
+
+  it("candles=[] 时安全返回默认值（不崩溃）", () => {
+    const result = assessParticipantPressure([], [], [], 0, strategyConfig);
+    expect(result.bias).toBe("balanced");
+    expect(result.pressureType).toBe("none");
+    expect(result.confidence).toBe(40);
+    expect(result.spotPerpBasis).toBe(0);
+    expect(result.basisDivergence).toBe(false);
+    expect(result.reasonCodes).toEqual([]);
+    expect(result.rationale).toContain("无 K 线数据");
+  });
 });
 
 // ── buildMarketContext 集成测试 ───────────────────────────────────────────────

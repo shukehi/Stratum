@@ -108,20 +108,23 @@ function makeTrendExhaustionCandles(): Candle[] {
     close: 60080 + i * 100,
     volume: 1000,
   }));
-  // Last 14 candles: front 7 normal ATR, back 7 with 3x ATR (expansion >= 2.0)
+  // Last 14 candles: front 7 normal ATR ~200, back 7 with 2.5x ATR ~500
+  // atrExpansion = 500/200 = 2.5 >= trendExtensionAtrPenaltyThreshold(2.0) ✓
+  // recentAtr ≈ 350, baselineAtr ≈ 202 → atrRatio ≈ 1.73 < 2.125
+  // → highVolatilityScore ≈ 59 < highVolatilityOverrideScore(75) ✓ (no hv override)
   const frontHalf = Array.from({ length: 7 }, (_, i) => ({
     timestamp: BASE_TIME + (40 + i) * INTERVAL,
     open: 64000 + i * 100,
-    high: 64150 + i * 100,
-    low: 63950 + i * 100,   // ATR ~200
-    close: 64080 + i * 100,
+    high: 64200 + i * 100,
+    low: 64000 + i * 100,   // ATR ~200
+    close: 64180 + i * 100,
     volume: 1000,
   }));
   const backHalf = Array.from({ length: 7 }, (_, i) => ({
     timestamp: BASE_TIME + (47 + i) * INTERVAL,
     open: 64700 + i * 100,
-    high: 65400 + i * 100,  // ATR ~800 (4x expansion)
-    low: 64000 + i * 100,
+    high: 65200 + i * 100,  // ATR ~500 (2.5x expansion, below hv-override)
+    low: 64700 + i * 100,
     close: 65100 + i * 100,
     volume: 2000,
   }));
@@ -206,6 +209,15 @@ describe("detectMarketRegime", () => {
     it("event-driven confidence is >= eventDrivenOverrideScore", () => {
       const result = detectMarketRegime(makeEventDrivenCandles(), strategyConfig);
       expect(result.confidence).toBeGreaterThanOrEqual(strategyConfig.eventDrivenOverrideScore);
+    });
+  });
+
+  describe("reasonCode isolation", () => {
+    it("event-driven result does NOT contain REGIME_TREND_EXHAUSTED even when ATR expansion exists", () => {
+      // event-driven overrides trend evaluation — exhaustion code must not leak
+      const result = detectMarketRegime(makeEventDrivenCandles(), strategyConfig);
+      expect(result.regime).toBe("event-driven");
+      expect(result.reasonCodes).not.toContain("REGIME_TREND_EXHAUSTED");
     });
   });
 

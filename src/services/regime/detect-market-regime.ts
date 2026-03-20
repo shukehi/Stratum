@@ -86,15 +86,13 @@ export function detectMarketRegime(
   if (atrExpansion >= config.trendExtensionAtrPenaltyThreshold) {
     trendScore *= 0.55;
     trendExhausted = true;
-    reasons.push(
-      `趋势末端衰竭惩罚: ATR 扩展比 ${atrExpansion.toFixed(2)}x ≥ 阈值 ${config.trendExtensionAtrPenaltyThreshold}，trendScore 已打折`
-    );
-    reasonCodes.push("REGIME_TREND_EXHAUSTED");
+    // NOTE: reasons/reasonCodes pushed after priority overrides to avoid
+    // REGIME_TREND_EXHAUSTED leaking into event-driven/high-volatility results
   }
 
   // ── 固定优先级选择 ────────────────────────────────────────────
 
-  // 1. event-driven 优先
+  // 1. event-driven 优先（override: 趋势衰竭信息在此情况下无关，不纳入）
   if (eventDrivenScore >= config.eventDrivenOverrideScore) {
     reasons.unshift(
       `事件驱动: 极端 K 线 ${(eventDrivenScore).toFixed(0)} 分 ≥ 阈值 ${config.eventDrivenOverrideScore}`
@@ -117,6 +115,14 @@ export function detectMarketRegime(
   const winnerScore = Math.max(trendScore, rangeScore);
   const loserScore = Math.min(trendScore, rangeScore);
   const gap = winnerScore - loserScore;
+
+  // 到这里才将衰竭惩罚纳入 reasons/reasonCodes（确保不会出现在 event-driven/high-volatility 结果中）
+  if (trendExhausted) {
+    reasons.push(
+      `趋势末端衰竭惩罚: ATR 扩展比 ${atrExpansion.toFixed(2)}x ≥ 阈值 ${config.trendExtensionAtrPenaltyThreshold}，trendScore 已打折`
+    );
+    reasonCodes.push("REGIME_TREND_EXHAUSTED");
+  }
 
   if (gap < config.minRegimeScoreGap) {
     reasons.push(
