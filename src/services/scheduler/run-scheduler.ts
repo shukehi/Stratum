@@ -1,4 +1,3 @@
-import type { SignalScanResult } from "../orchestrator/run-signal-scan.js";
 import { logger } from "../../app/logger.js";
 
 /**
@@ -68,7 +67,7 @@ export function msUntilNextBoundary(
 // ── メインスケジューラ ──────────────────────────────────────────────────────
 
 export async function runScheduler(
-  scanFn: () => Promise<SignalScanResult>,
+  scanFn: () => Promise<unknown>,
   options: SchedulerOptions = {},
   signal?: AbortSignal
 ): Promise<void> {
@@ -115,21 +114,12 @@ export async function runScheduler(
 // ── 内部ヘルパー ────────────────────────────────────────────────────────────
 
 async function executeScan(
-  scanFn: () => Promise<SignalScanResult>
+  scanFn: () => Promise<unknown>
 ): Promise<void> {
   logger.info("Scheduler: executing scan");
   try {
-    const result = await scanFn();
-    logger.info(
-      {
-        symbol: result.symbol,
-        candidatesFound: result.candidatesFound,
-        alertsSent: result.alertsSent,
-        macroAction: result.macroAction,
-        errors: result.errors.length,
-      },
-      "Scheduler: scan complete"
-    );
+    await scanFn();
+    logger.info("Scheduler: scan complete");
   } catch (err) {
     logger.error(
       { err },
