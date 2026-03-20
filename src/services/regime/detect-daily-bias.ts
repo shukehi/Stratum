@@ -1,115 +1,150 @@
 import type { Candle } from "../../domain/market/candle.js";
-import type { DailyBias, DailyBiasResult } from "../../domain/market/daily-bias.js";
+import type {
+  DailyBias,
+  DailyBiasResult,
+  MarketStructure,
+} from "../../domain/market/daily-bias.js";
 
 /**
- * 日线趋势检测器  (PHASE_16)
+ * 日线市场结构检测器  (PHASE_16 — 修订版)
  *
- * 使用 EMA20 / EMA50 双均线交叉法识别日线级别的主趋势方向，
- * 作为 4h 信号的高级别趋势过滤器。
+ * 第一性原理：机构资金通过摆高/摆低序列留下结构性痕迹。
+ * 多头结构 = 更高的摆高（HH）+ 更高的摆低（HL）→ 价格在向上寻找流动性。
+ * 空头结构 = 更低的摆高（LH）+ 更低的摆低（LL）→ 价格在向下寻找流动性。
  *
- * 判断规则（第一性原理，顺序应用）:
- *   数据不足（< 50 根）→ neutral（信息不足，不干扰信号）
- *   EMA 间距 < separationThreshold → neutral（均线粘合，无趋势）
- *   EMA20 > EMA50 AND close > EMA20 → bullish（趋势上升且价格在均线上方）
- *   EMA20 < EMA50 AND close < EMA20 → bearish（趋势下降且价格在均线下方）
- *   其他（EMA 分叉但价格站错侧）  → neutral（过渡/回调区域）
+ * 算法步骤：
+ *   1. 枢纽检测：遍历日线 K 线，找出摆高/摆低（Pivot High/Low）。
+ *      枢纽高 = 该根 K 线的最高价严格大于左右各 swingLookback 根 K 线的最高价。
+ *      枢纽低 = 该根 K 线的最低价严格小于左右各 swingLookback 根 K 线的最低价。
+ *   2. 取最近 2 个已确认枢纽高（SH）和 2 个已确认枢纽低（SL）。
+ *   3. 对比相邻枢纽，判断结构：
+ *      HH_HL → bias = bullish  |  LH_LL → bias = bearish
+ *      HH_LL / LH_HL → bias = neutral（膨胀 / 收敛）
+ *      insufficient → bias = neutral（枢纽点不足）
  *
- * EMA 计算（指数移动平均）:
- *   k = 2 / (period + 1)
- *   EMA_t = close_t * k + EMA_{t-1} * (1 - k)
- *   初始值 = 前 period 根的 SMA
+ * swingLookback（默认 3）:
+ *   枢纽必须是 2×lookback+1 根 K 线窗口内的最高/最低点。
+ *   lookback=3 → 7 根窗口，过滤日内噪声，识别主要结构点。
  *
- * separationThreshold（默认 0.005 = 0.5%）:
- *   |(EMA20 - EMA50) / EMA50| < 0.5% → 视为均线粘合 → neutral
- *   避免在均线交叉瞬间产生误判
+ * 为什么不用 EMA：
+ *   EMA 是机构行为的滞后映射；摆高/摆低序列是机构行为的直接体现。
+ *   在 CHoCH（结构转变）发生时，EMA 仍滞后显示旧趋势，
+ *   而摆高/摆低序列能即时反映新结构，避免在关键转折点误判。
  */
 export function detectDailyBias(
   candles1d: Candle[],
-  separationThreshold = 0.005
+  swingLookback = 3,
 ): DailyBiasResult {
-  const NEUTRAL: DailyBiasResult = {
-    bias: "neutral",
-    ema20: 0,
-    ema50: 0,
-    latestClose: candles1d.at(-1)?.close ?? 0,
-    separation: 0,
-    reason: "数据不足（< 50 根日线），无法判断日线趋势，默认中性",
-  };
+  const latestClose = candles1d.at(-1)?.close ?? 0;
 
-  if (candles1d.length < 50) return NEUTRAL;
-
-  const closes = candles1d.map(c => c.close);
-  const ema20 = computeEma(closes, 20);
-  const ema50 = computeEma(closes, 50);
-  const latestClose = closes[closes.length - 1];
-
-  // EMA 间距（相对于 EMA50）
-  const separation = (ema20 - ema50) / ema50;
-
-  // 均线粘合 → neutral
-  if (Math.abs(separation) < separationThreshold) {
+  // 至少需要 lookback * 2 + 4 根才能提取 2 个枢纽
+  const MIN_CANDLES = swingLookback * 2 + 4;
+  if (candles1d.length < MIN_CANDLES) {
     return {
       bias: "neutral",
-      ema20,
-      ema50,
+      structure: "insufficient",
+      lastSwingHigh: null,
+      lastSwingLow: null,
       latestClose,
-      separation,
-      reason: `EMA20/EMA50 间距 ${(separation * 100).toFixed(2)}% < 阈值 ${(separationThreshold * 100).toFixed(1)}%，视为均线粘合，中性`,
+      reason: `日线 K 线数量不足（当前 ${candles1d.length} 根，需要至少 ${MIN_CANDLES} 根），无法判断结构，默认中性`,
     };
   }
 
-  if (ema20 > ema50 && latestClose > ema20) {
+  // ── 步骤 1: 枢纽检测 ──────────────────────────────────────────────────────
+  const swingHighs = findSwingHighs(candles1d, swingLookback);
+  const swingLows  = findSwingLows(candles1d, swingLookback);
+
+  // ── 步骤 2: 取最近 2 个已确认枢纽 ─────────────────────────────────────────
+  if (swingHighs.length < 2 || swingLows.length < 2) {
     return {
-      bias: "bullish",
-      ema20,
-      ema50,
+      bias: "neutral",
+      structure: "insufficient",
+      lastSwingHigh: swingHighs.at(-1)?.price ?? null,
+      lastSwingLow:  swingLows.at(-1)?.price ?? null,
       latestClose,
-      separation,
-      reason: `EMA20(${ema20.toFixed(0)}) > EMA50(${ema50.toFixed(0)})，收盘价 ${latestClose.toFixed(0)} 在 EMA20 上方，日线看涨`,
+      reason: `已确认枢纽高 ${swingHighs.length} 个、枢纽低 ${swingLows.length} 个，不足以判断结构（需各 ≥ 2），默认中性`,
     };
   }
 
-  if (ema20 < ema50 && latestClose < ema20) {
-    return {
-      bias: "bearish",
-      ema20,
-      ema50,
-      latestClose,
-      separation,
-      reason: `EMA20(${ema20.toFixed(0)}) < EMA50(${ema50.toFixed(0)})，收盘价 ${latestClose.toFixed(0)} 在 EMA20 下方，日线看跌`,
-    };
-  }
+  const prevSH = swingHighs[swingHighs.length - 2].price;
+  const lastSH = swingHighs[swingHighs.length - 1].price;
+  const prevSL = swingLows[swingLows.length - 2].price;
+  const lastSL = swingLows[swingLows.length - 1].price;
 
-  // EMA 已分叉但价格在中间区域（回调/反弹过渡期）
-  const side = ema20 > ema50 ? "看涨" : "看跌";
+  // ── 步骤 3: 结构分类 ───────────────────────────────────────────────────────
+  const higherHigh = lastSH > prevSH;
+  const higherLow  = lastSL > prevSL;
+
+  let structure: MarketStructure;
+  if      ( higherHigh &&  higherLow) structure = "HH_HL";
+  else if (!higherHigh && !higherLow) structure = "LH_LL";
+  else if ( higherHigh && !higherLow) structure = "HH_LL";
+  else                                structure = "LH_HL";
+
+  const bias: DailyBias =
+    structure === "HH_HL" ? "bullish" :
+    structure === "LH_LL" ? "bearish" :
+    "neutral";
+
+  const structureLabel: Record<MarketStructure, string> = {
+    HH_HL:        "更高摆高 + 更高摆低（多头结构）",
+    LH_LL:        "更低摆高 + 更低摆低（空头结构）",
+    HH_LL:        "更高摆高 + 更低摆低（膨胀区间，中性）",
+    LH_HL:        "更低摆高 + 更高摆低（收敛区间，中性）",
+    insufficient: "枢纽不足",
+  };
+
   return {
-    bias: "neutral",
-    ema20,
-    ema50,
+    bias,
+    structure,
+    lastSwingHigh: lastSH,
+    lastSwingLow:  lastSL,
     latestClose,
-    separation,
-    reason: `EMA 呈 ${side} 排列但价格处于过渡区，视为中性`,
+    reason: `日线结构：${structureLabel[structure]}。摆高 ${prevSH.toFixed(0)} → ${lastSH.toFixed(0)}，摆低 ${prevSL.toFixed(0)} → ${lastSL.toFixed(0)}`,
   };
 }
 
-// ── EMA 计算 ──────────────────────────────────────────────────────────────────
+// ── 枢纽检测辅助函数 ──────────────────────────────────────────────────────────
+
+type SwingPoint = { index: number; price: number };
 
 /**
- * 计算 EMA（指数移动平均），初始值用前 period 根的 SMA。
- * 返回最后一根 K 线对应的 EMA 值。
+ * 找出所有已确认的摆高（Pivot High）。
+ * 条件：candles[i].high 严格大于左右各 lookback 根 K 线的最高价。
+ * 右侧确认需要 lookback 根后续 K 线，因此最多检测到 length - lookback - 1 位置。
  */
-export function computeEma(closes: number[], period: number): number {
-  if (closes.length < period) return closes[closes.length - 1] ?? 0;
-
-  const k = 2 / (period + 1);
-
-  // 初始值：前 period 根的 SMA
-  let ema = closes.slice(0, period).reduce((s, v) => s + v, 0) / period;
-
-  // 从第 period 根开始递推
-  for (let i = period; i < closes.length; i++) {
-    ema = closes[i] * k + ema * (1 - k);
+function findSwingHighs(candles: Candle[], lookback: number): SwingPoint[] {
+  const pivots: SwingPoint[] = [];
+  for (let i = lookback; i < candles.length - lookback; i++) {
+    const h = candles[i].high;
+    let isSwing = true;
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j !== i && candles[j].high >= h) {
+        isSwing = false;
+        break;
+      }
+    }
+    if (isSwing) pivots.push({ index: i, price: h });
   }
+  return pivots;
+}
 
-  return ema;
+/**
+ * 找出所有已确认的摆低（Pivot Low）。
+ * 条件：candles[i].low 严格小于左右各 lookback 根 K 线的最低价。
+ */
+function findSwingLows(candles: Candle[], lookback: number): SwingPoint[] {
+  const pivots: SwingPoint[] = [];
+  for (let i = lookback; i < candles.length - lookback; i++) {
+    const l = candles[i].low;
+    let isSwing = true;
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j !== i && candles[j].low <= l) {
+        isSwing = false;
+        break;
+      }
+    }
+    if (isSwing) pivots.push({ index: i, price: l });
+  }
+  return pivots;
 }

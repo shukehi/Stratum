@@ -150,10 +150,10 @@ export async function runSignalScan(
   saveCandles(db, symbol, "1h", candles1h);
   if (candles1d.length > 0) saveCandles(db, symbol, "1d", candles1d);
 
-  // ── PHASE_16: 日线趋势偏向（EMA20/50 方向过滤）──────────────────────────
+  // ── PHASE_16: 日线市场结构过滤（摆高/摆低序列，第一性原理）────────────────
   const dailyBiasResult =
-    candles1d.length >= 50
-      ? detectDailyBias(candles1d, config.dailyEmaSeparationThreshold)
+    candles1d.length >= config.dailySwingLookback * 2 + 4
+      ? detectDailyBias(candles1d, config.dailySwingLookback)
       : null;
   if (dailyBiasResult) {
     logger.debug(

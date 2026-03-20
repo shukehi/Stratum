@@ -515,3 +515,72 @@ describe("evaluateConsensus — 多 setup 场景", () => {
     expect(evaluateConsensus(input)).toHaveLength(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("gate 8: 日线趋势过滤 (PHASE_16)", () => {
+  it("逆势做多 + bearish 日线 → 等级降一级 + DAILY_TREND_COUNTER reasonCode", () => {
+    // high-conviction 做多信号 + bearish 日线 → should downgrade to standard
+    const input = makeInput({ dailyBias: "bearish" });
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    // high-conviction → standard (downgraded one level)
+    expect(c.signalGrade).toBe("standard");
+    expect(c.reasonCodes).toContain("DAILY_TREND_COUNTER");
+    expect(c.reasonCodes).not.toContain("DAILY_TREND_ALIGNED");
+  });
+
+  it("逆势做空 + bullish 日线 → 等级降一级 + DAILY_TREND_COUNTER reasonCode", () => {
+    const input: ConsensusInput = {
+      symbol: "BTCUSDT",
+      setups: [makePassingShortSetup()],
+      ctx: makeBullishCtx(),
+      config: strategyConfig,
+      dailyBias: "bullish",
+    };
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("standard");
+    expect(c.reasonCodes).toContain("DAILY_TREND_COUNTER");
+  });
+
+  it("顺势做多 + bullish 日线 → 等级不变 + DAILY_TREND_ALIGNED reasonCode", () => {
+    const input = makeInput({ dailyBias: "bullish" });
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    // high-conviction setup aligned with bullish → stays high-conviction
+    expect(c.signalGrade).toBe("high-conviction");
+    expect(c.reasonCodes).toContain("DAILY_TREND_ALIGNED");
+    expect(c.reasonCodes).not.toContain("DAILY_TREND_COUNTER");
+  });
+
+  it("neutral 日线偏向 → 等级不变，无 DAILY_TREND_* reasonCode", () => {
+    const input = makeInput({ dailyBias: "neutral" });
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("high-conviction");
+    expect(c.reasonCodes).not.toContain("DAILY_TREND_COUNTER");
+    expect(c.reasonCodes).not.toContain("DAILY_TREND_ALIGNED");
+  });
+
+  it("未传入 dailyBias → 等级不变，无 DAILY_TREND_* reasonCode", () => {
+    const input = makeInput(); // no dailyBias
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("high-conviction");
+    expect(c.reasonCodes).not.toContain("DAILY_TREND_COUNTER");
+    expect(c.reasonCodes).not.toContain("DAILY_TREND_ALIGNED");
+  });
+
+  it("standard 信号逆势 → 降至 watch", () => {
+    // score=70 → standard grade, then counter-trend → watch
+    const input = makeInput(
+      { dailyBias: "bearish" },
+      { structureScore: 70, confluenceFactors: ["fvg"] } // score=70, only 1 factor → standard not high-conviction
+    );
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("watch");
+    expect(c.reasonCodes).toContain("DAILY_TREND_COUNTER");
+  });
+});

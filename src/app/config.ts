@@ -54,8 +54,8 @@ export type StrategyConfig = {
   readonly maxNewsItemsForPrompt: number;
 
   // --- 日线趋势过滤 ---
-  readonly dailyDataLimit: number;          // 拉取的日线 K 线数量
-  readonly dailyEmaSeparationThreshold: number; // EMA20/50 粘合阈值（默认 0.5%）
+  readonly dailyDataLimit: number;    // 拉取的日线 K 线数量
+  readonly dailySwingLookback: number; // 枢纽检测回看根数（默认 3，即 7 根窗口）
 
   // --- 校准 ---
   readonly calibrationMinSampleSize: number;
@@ -109,8 +109,8 @@ export const strategyConfig = {
   maxNewsItemsForPrompt: 10,
 
   // --- 日线趋势过滤 ---
-  dailyDataLimit: 100,                  // 100 根日线 ≈ 3 个月
-  dailyEmaSeparationThreshold: 0.005,   // EMA 间距 < 0.5% 视为粘合
+  dailyDataLimit: 100,       // 100 根日线 ≈ 3 个月
+  dailySwingLookback: 3,     // 枢纽 = 7 根窗口内的最高/最低点（3+1+3）
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,
