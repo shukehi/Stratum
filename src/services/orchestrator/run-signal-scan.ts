@@ -23,6 +23,7 @@ import { findCandidate } from "../persistence/load-candidates.js";
 import { sendAlert } from "../alerting/send-alert.js";
 import { getCurrentSession } from "../../utils/session.js";
 import { countOpenByDirection, openPosition } from "../positions/track-position.js";
+import { saveScanLog } from "../persistence/save-scan-log.js";
 
 /**
  * ワークフロー・オーケストレーター  (PHASE_09)
@@ -183,7 +184,7 @@ export async function runSignalScan(
   // 候補がゼロならマクロ評価・アラート送信は不要
   if (candidatesFound === 0) {
     logger.info({ symbol }, "PHASE_09: no candidates, scan complete");
-    return {
+    const emptyResult: SignalScanResult = {
       symbol,
       scannedAt,
       candidatesFound: 0,
@@ -194,6 +195,8 @@ export async function runSignalScan(
       macroAction: "pass",
       errors,
     };
+    saveScanLog(db, emptyResult);
+    return emptyResult;
   }
 
   // ── PHASE_07: マクロオーバーレイ ──────────────────────────────────────
@@ -285,7 +288,7 @@ export async function runSignalScan(
     "PHASE_09: scan complete"
   );
 
-  return {
+  const result: SignalScanResult = {
     symbol,
     scannedAt,
     candidatesFound,
@@ -296,4 +299,9 @@ export async function runSignalScan(
     macroAction,
     errors,
   };
+
+  // PHASE_12: 每次扫描结果持久化到 scan_logs
+  saveScanLog(db, result);
+
+  return result;
 }

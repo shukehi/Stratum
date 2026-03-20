@@ -13,6 +13,26 @@ import { initPositionsDb } from "../positions/init-positions-db.js";
  */
 export function initDb(db: Database.Database): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS scan_logs (
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol                 TEXT    NOT NULL,
+      scanned_at             INTEGER NOT NULL,
+      candidates_found       INTEGER NOT NULL DEFAULT 0,
+      candidates_after_macro INTEGER NOT NULL DEFAULT 0,
+      alerts_sent            INTEGER NOT NULL DEFAULT 0,
+      alerts_failed          INTEGER NOT NULL DEFAULT 0,
+      alerts_skipped         INTEGER NOT NULL DEFAULT 0,
+      macro_action           TEXT    NOT NULL DEFAULT 'pass',
+      errors_count           INTEGER NOT NULL DEFAULT 0,
+      errors_json            TEXT    NOT NULL DEFAULT '[]'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_scan_logs_symbol
+      ON scan_logs(symbol);
+
+    CREATE INDEX IF NOT EXISTS idx_scan_logs_scanned_at
+      ON scan_logs(scanned_at);
+
     CREATE TABLE IF NOT EXISTS candidates (
       id               TEXT    PRIMARY KEY,
       symbol           TEXT    NOT NULL,
