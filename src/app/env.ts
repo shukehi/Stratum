@@ -14,6 +14,7 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().default("./stratum.db"),
   ACCOUNT_SIZE: z.coerce.number().positive().default(10000),
   RISK_PER_TRADE: z.coerce.number().positive().max(0.05).default(0.01),
+  HEARTBEAT_INTERVAL_H: z.coerce.number().positive().default(6), // 心跳间隔（小时），默认 6h
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });

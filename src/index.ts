@@ -7,15 +7,22 @@ import { runSignalScan } from "./services/orchestrator/run-signal-scan.js";
 import { runScheduler } from "./services/scheduler/run-scheduler.js";
 import { fetchNews } from "./services/macro/fetch-news.js";
 import { monitorPositions } from "./services/paper-trading/monitor-positions.js";
+import { monitorSession } from "./services/session/monitor-session.js";
+import { sendHeartbeat } from "./services/system/send-heartbeat.js";
+import type { LiquiditySession } from "./domain/market/market-context.js";
 
 /**
- * Stratum 入口  (PHASE_11)
+ * Stratum 入口  (PHASE_13)
  *
- * 双调度器架构：
+ * 四调度器架构：
  *   1. 信号扫描器（每 4h UTC 边界 + 30s 缓冲）
  *      检测结构信号 → 宏观过滤 → 发送 Telegram → 开模拟仓位
  *   2. 仓位监控器（每 30s）
  *      获取实时价格 → 检查 TP/SL → 自动平仓 → 发送 Telegram 通知
+ *   3. 时段监控器（每 60s）
+ *      检测交易时段切换 → 终端日志 + Telegram 通知
+ *   4. 心跳通知器（默认每 6h，可通过 HEARTBEAT_INTERVAL_H 配置）
+ *      推送系统运行状态：运行时长 / 持仓概况 / 累计统计
  *
  * 必填环境变量:
  *   TELEGRAM_BOT_TOKEN  - Telegram Bot Token
@@ -33,7 +40,9 @@ import { monitorPositions } from "./services/paper-trading/monitor-positions.js"
  *   RISK_PER_TRADE      - 单笔风险比例（默认: 0.01 = 1%）
  */
 
-logger.info({ version: "0.11.0" }, "Stratum starting");
+const VERSION = "0.13.0";
+const STARTED_AT = Date.now();
+logger.info({ version: VERSION }, "Stratum starting");
 
 const client = new CcxtClient(env.EXCHANGE_NAME, env.SPOT_SYMBOL);
 const db = openDb(env.DATABASE_URL);
@@ -113,9 +122,41 @@ async function main(): Promise<void> {
     shutdownController.signal
   );
 
-  await Promise.all([signalScheduler, positionMonitor]);
+  // ── 调度器 3：交易时段监控（每 60s 检测时段切换）─────────────────────────
+  let lastSession: LiquiditySession | null = null;
+  const sessionMonitor = runScheduler(
+    async () => {
+      lastSession = await monitorSession(lastSession, telegramConfig);
+    },
+    {
+      intervalMs: 60_000,            // 每 60 秒检查一次
+      alignToInterval: false,
+      immediate: true,               // 启动时立即初始化当前时段
+    },
+    shutdownController.signal
+  );
 
-  logger.info("Stratum: 所有调度器已退出");
+  // ── 调度器 4：心跳通知（每 N 小时推送系统状态摘要）──────────────────────────
+  const heartbeatIntervalMs = env.HEARTBEAT_INTERVAL_H * 60 * 60 * 1000;
+  const heartbeatScheduler = runScheduler(
+    async () => {
+      await sendHeartbeat(db, telegramConfig, {
+        version: VERSION,
+        startedAt: STARTED_AT,
+        currentSession: lastSession,
+      });
+    },
+    {
+      intervalMs: heartbeatIntervalMs,   // 默认 6h，可通过 HEARTBEAT_INTERVAL_H 配置
+      alignToInterval: false,
+      immediate: false,                  // 启动时不发，等第一个间隔到期再发
+    },
+    shutdownController.signal
+  );
+
+  await Promise.all([signalScheduler, positionMonitor, sessionMonitor, heartbeatScheduler]);
+
+  logger.info("Stratum: 所有调度器已退出（信号扫描 / 仓位监控 / 时段监控）");
   process.exit(0);
 }
 
