@@ -35,11 +35,13 @@ export async function cmdBacktest(
 
   // ── 打开 DB（只读模式不适用，需要写入缓存）────────────────────────────────
   const db = new BetterSqlite3(dbPath);
+  try {
 
   // ── 获取 K 线数据（DB 优先）───────────────────────────────────────────────
   let candles4h, candles1h;
   let dataSource: "db" | "exchange";
 
+  // 1h 需要 4 倍数量：1 根 4h ≈ 4 根 1h，保证覆盖相同时间窗口
   const fresh4h = !forceFresh && isCandleDataFresh(db, symbol, "4h", limit);
   const fresh1h = !forceFresh && isCandleDataFresh(db, symbol, "1h", limit * 4);
 
@@ -75,7 +77,6 @@ export async function cmdBacktest(
     } catch (err: any) {
       process.stdout.write(" 失败\n");
       console.error(red(`  ✗ 数据拉取错误：${err.message}`));
-      db.close();
       return;
     }
   }
@@ -83,9 +84,9 @@ export async function cmdBacktest(
   console.log(dim(`  数据来源: ${dataSource === "db" ? "本地缓存" : "交易所实时"}  |  K线: ${limit} 根 4h`));
   console.log();
 
+  // 60 根 = 10 天的 4h K线，是产生有意义回测结果的最低要求
   if (candles4h.length < 60) {
     console.log(red(`  ✗ 数据不足（只有 ${candles4h.length} 根），至少需要 60 根 4h K线`));
-    db.close();
     return;
   }
 
@@ -97,7 +98,6 @@ export async function cmdBacktest(
 
   if (signals.length === 0) {
     console.log(dim("  在此区间未发现符合条件的结构信号。"));
-    db.close();
     return;
   }
 
@@ -159,7 +159,10 @@ export async function cmdBacktest(
   }
 
   console.log();
-  db.close();
+
+  } finally {
+    db.close();
+  }
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────

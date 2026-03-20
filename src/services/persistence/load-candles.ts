@@ -101,6 +101,8 @@ export function isCandleDataFresh(
   const latest = getLatestCandleTimestamp(db, symbol, timeframe);
   if (latest === null) return false;
 
+  // 注意：未在 TIMEFRAME_MS 登记的时间框架（如 "1w"）会回退到 4h 间隔；
+  // 支持新时间框架时需先在 TIMEFRAME_MS 中添加对应毫秒数。
   const intervalMs = TIMEFRAME_MS[timeframe] ?? TIMEFRAME_MS["4h"];
   return Date.now() - latest <= intervalMs;
 }
