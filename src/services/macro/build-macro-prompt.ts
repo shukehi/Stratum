@@ -41,13 +41,13 @@ Respond ONLY with a valid JSON object (no markdown code fences, no explanation o
   "confidenceScore": <integer 0-10>,
   "btcRelevance": <integer 0-10>,
   "catalystSummary": "<1-2 sentence summary of the key macro catalyst driving your assessment>",
-  "riskFlags": ["<upcoming event or risk>"]
+  "riskFlags": []
 }
 
 Scoring guide:
 - confidenceScore: How confident you are in the directional bias (0 = no clear signal, 10 = very strong clear signal)
 - btcRelevance: How directly relevant these events are to BTC price action (0 = irrelevant, 10 = highly relevant)
-- riskFlags: List any major upcoming scheduled events or sudden risks (e.g. "FOMC meeting", "CPI release", "regulatory action", "exchange hack"). Use empty array [] if none.
+- riskFlags: Empty array [] if no major upcoming events. If events exist, list them (e.g. ["FOMC meeting", "CPI release", "regulatory action", "exchange hack"]).
 
 Important:
 - If news is ambiguous, mixed, or unrelated to BTC/crypto/macro, return "neutral" with low scores.

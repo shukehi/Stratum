@@ -45,7 +45,22 @@ export async function assessMacroOverlay(
   llmCall: LlmCallFn
 ): Promise<{ assessment: MacroAssessment; decision: MacroOverlayDecision }> {
   const prompt = buildMacroPrompt(news, config);
-  const rawResponse = await llmCall(prompt);
+
+  let rawResponse: string;
+  try {
+    rawResponse = await llmCall(prompt);
+  } catch {
+    // LLM 调用失败（网络超时 / API 错误）→ 降级为中性，默认 pass
+    const assessment = parseMacroResponse(prompt, "");
+    const decision: MacroOverlayDecision = {
+      action: "pass",
+      confidence: 0,
+      reason: "LLM 调用失败，无法获取宏观评估，默认通过",
+      reasonCodes: [],
+    };
+    return { assessment, decision };
+  }
+
   const assessment = parseMacroResponse(prompt, rawResponse);
   const decision = deriveDecision(assessment, config);
   return { assessment, decision };

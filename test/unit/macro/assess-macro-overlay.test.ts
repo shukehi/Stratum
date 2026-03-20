@@ -175,6 +175,29 @@ describe("assessMacroOverlay — 看空 + 无 riskFlags → downgrade", () => {
   });
 });
 
+// ── LLM 调用抛出异常 → 降级为 pass ───────────────────────────────────────────
+
+describe("assessMacroOverlay — LLM 调用抛出异常", () => {
+  it("llmCall 抛出 Error → action=pass（不崩溃）", async () => {
+    const throwingLlm: LlmCallFn = async () => { throw new Error("Network timeout"); };
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, throwingLlm);
+    expect(decision.action).toBe("pass");
+  });
+
+  it("llmCall 抛出时 assessment.confidenceScore=0（中性）", async () => {
+    const throwingLlm: LlmCallFn = async () => { throw new Error("API error"); };
+    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, throwingLlm);
+    expect(assessment.confidenceScore).toBe(0);
+    expect(assessment.macroBias).toBe("neutral");
+  });
+
+  it("llmCall 抛出时 reasonCodes 为空", async () => {
+    const throwingLlm: LlmCallFn = async () => { throw new Error("Timeout"); };
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, throwingLlm);
+    expect(decision.reasonCodes).toHaveLength(0);
+  });
+});
+
 // ── LLM 响应解析失败 → 降级为中性 pass ───────────────────────────────────────
 
 describe("assessMacroOverlay — LLM 响应解析失败", () => {

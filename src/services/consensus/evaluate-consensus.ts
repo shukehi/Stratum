@@ -33,10 +33,10 @@ export type ConsensusInput = {
  *   1. invalidated     → 直接丢弃（结构已失效，不输出任何候选）
  *   2. DELEVERAGING_VACUUM in ctx → 丢弃（去杠杆真空期）
  *   3. structureScore < minStructureScore → 丢弃（结构质量不足）
- *   4. 弱参与者 + 低结构分   → 丢弃 + PARTICIPANT_CONFIDENCE_TOO_LOW
- *   5. RR < minimumRiskReward → 丢弃 + RISK_REWARD_TOO_LOW
- *   6. 止损过宽 (ATR 可用时) → 丢弃 + STOP_DISTANCE_TOO_WIDE
- *   7. 相关性暴露超限       → 丢弃 + CORRELATED_EXPOSURE_LIMIT
+ *   4. 弱参与者 + 低结构分   → 丢弃（参与者置信度不足以支撑低结构分信号）
+ *   5. RR < minimumRiskReward → 丢弃（风险回报比不达标）
+ *   6. 止损过宽 (ATR 可用时) → 丢弃（止损距离超过 maxStopDistanceAtr × ATR）
+ *   7. 相关性暴露超限       → 丢弃（同向已有仓位数超过 maxCorrelatedSignalsPerDirection）
  *
  * 方向校准:
  *   isRegimeAligned:
