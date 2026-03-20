@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     }
 
     case "backtest": {
-      await cmdBacktest(args, env.EXCHANGE_NAME, env.SPOT_SYMBOL);
+      await cmdBacktest(args, env.EXCHANGE_NAME, env.SPOT_SYMBOL, env.DATABASE_URL);
       break;
     }
 

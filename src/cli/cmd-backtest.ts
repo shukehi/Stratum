@@ -1,8 +1,11 @@
+import BetterSqlite3 from "better-sqlite3";
 import { CcxtClient } from "../clients/exchange/ccxt-client.js";
 import { strategyConfig } from "../app/config.js";
 import { generateBacktestSignals, runBacktest } from "../services/backtest/run-backtest.js";
 import { computeStats } from "../services/backtest/compute-stats.js";
-import { header, section, kv, fmtR, fmtPct, dim, green, red, yellow, gray, bold, HR } from "./fmt.js";
+import { loadCandles, isCandleDataFresh, countCandles } from "../services/persistence/load-candles.js";
+import { saveCandles } from "../services/persistence/save-candles.js";
+import { header, section, kv, fmtR, fmtPct, dim, green, red, yellow, printTable } from "./fmt.js";
 
 /**
  * backtest 子命令
@@ -11,35 +14,78 @@ import { header, section, kv, fmtR, fmtPct, dim, green, red, yellow, gray, bold,
  *   pnpm backtest                      → BTC/USDT:USDT，500 根 4h K线
  *   pnpm backtest --symbol ETHUSDT     → 指定品种
  *   pnpm backtest --limit 200          → 指定 K线数量
+ *   pnpm backtest --fresh              → 强制从交易所重新拉取（忽略本地缓存）
+ *
+ * 数据来源策略：
+ *   1. 本地 DB 数据足够且新鲜（最新一根在一个周期内）→ 直接使用，无需联网
+ *   2. 本地数据不足或过期 → 从交易所拉取并保存到 DB
  */
-export async function cmdBacktest(args: string[], exchangeName: string, spotSymbol: string): Promise<void> {
+export async function cmdBacktest(
+  args: string[],
+  exchangeName: string,
+  spotSymbol: string,
+  dbPath: string
+): Promise<void> {
   // ── 解析参数 ──────────────────────────────────────────────────────────────
-  const symbol = parseArg(args, "--symbol") ?? "BTCUSDT";
-  const limit  = parseInt(parseArg(args, "--limit") ?? "500", 10);
+  const symbol    = parseArg(args, "--symbol") ?? "BTCUSDT";
+  const limit     = parseInt(parseArg(args, "--limit") ?? "500", 10);
+  const forceFresh = args.includes("--fresh");
 
   header(`🔄  回测引擎  —  ${symbol}`);
-  console.log(dim(`  K线数量: ${limit} 根 4h  |  交易所: ${exchangeName}`));
-  console.log();
 
-  // ── 拉取市场数据 ──────────────────────────────────────────────────────────
-  process.stdout.write("  📡 正在拉取数据...");
-  const client = new CcxtClient(exchangeName, spotSymbol);
+  // ── 打开 DB（只读模式不适用，需要写入缓存）────────────────────────────────
+  const db = new BetterSqlite3(dbPath);
 
+  // ── 获取 K 线数据（DB 优先）───────────────────────────────────────────────
   let candles4h, candles1h;
-  try {
-    [candles4h, candles1h] = await Promise.all([
-      client.fetchOHLCV(symbol, "4h", limit),
-      client.fetchOHLCV(symbol, "1h", limit * 4),
-    ]);
-    process.stdout.write(` 完成 (${candles4h.length} 根 4h / ${candles1h.length} 根 1h)\n`);
-  } catch (err: any) {
-    process.stdout.write(" 失败\n");
-    console.error(red(`  ✗ 数据拉取错误：${err.message}`));
-    return;
+  let dataSource: "db" | "exchange";
+
+  const fresh4h = !forceFresh && isCandleDataFresh(db, symbol, "4h", limit);
+  const fresh1h = !forceFresh && isCandleDataFresh(db, symbol, "1h", limit * 4);
+
+  if (fresh4h && fresh1h) {
+    // ── 使用本地缓存 ──────────────────────────────────────────────────────
+    process.stdout.write("  💾 使用本地缓存数据...");
+    candles4h = loadCandles(db, symbol, "4h", limit);
+    candles1h = loadCandles(db, symbol, "1h", limit * 4);
+    dataSource = "db";
+    process.stdout.write(` ${candles4h.length} 根 4h / ${candles1h.length} 根 1h\n`);
+  } else {
+    // ── 从交易所拉取 ──────────────────────────────────────────────────────
+    const reason = forceFresh ? "--fresh 参数" :
+      !fresh4h ? `4h 数据不足或过期（现有 ${countCandles(db, symbol, "4h")} 根）` :
+      `1h 数据不足或过期（现有 ${countCandles(db, symbol, "1h")} 根）`;
+
+    process.stdout.write(`  📡 从交易所拉取数据（${reason}）...`);
+    const client = new CcxtClient(exchangeName, spotSymbol);
+
+    try {
+      [candles4h, candles1h] = await Promise.all([
+        client.fetchOHLCV(symbol, "4h", limit),
+        client.fetchOHLCV(symbol, "1h", limit * 4),
+      ]);
+      process.stdout.write(` 完成 (${candles4h.length} 根 4h / ${candles1h.length} 根 1h)\n`);
+
+      // 保存到 DB 供下次使用
+      process.stdout.write("  💾 保存到本地缓存...");
+      saveCandles(db, symbol, "4h", candles4h);
+      saveCandles(db, symbol, "1h", candles1h);
+      process.stdout.write(" 完成\n");
+      dataSource = "exchange";
+    } catch (err: any) {
+      process.stdout.write(" 失败\n");
+      console.error(red(`  ✗ 数据拉取错误：${err.message}`));
+      db.close();
+      return;
+    }
   }
+
+  console.log(dim(`  数据来源: ${dataSource === "db" ? "本地缓存" : "交易所实时"}  |  K线: ${limit} 根 4h`));
+  console.log();
 
   if (candles4h.length < 60) {
     console.log(red(`  ✗ 数据不足（只有 ${candles4h.length} 根），至少需要 60 根 4h K线`));
+    db.close();
     return;
   }
 
@@ -51,6 +97,7 @@ export async function cmdBacktest(args: string[], exchangeName: string, spotSymb
 
   if (signals.length === 0) {
     console.log(dim("  在此区间未发现符合条件的结构信号。"));
+    db.close();
     return;
   }
 
@@ -105,7 +152,6 @@ export async function cmdBacktest(args: string[], exchangeName: string, spotSymb
     };
   });
 
-  const { printTable } = await import("./fmt.js");
   printTable(["#", "方向", "入场", "出场", "结果", "盈亏"], rows);
 
   if (trades.length > 10) {
@@ -113,6 +159,7 @@ export async function cmdBacktest(args: string[], exchangeName: string, spotSymb
   }
 
   console.log();
+  db.close();
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────

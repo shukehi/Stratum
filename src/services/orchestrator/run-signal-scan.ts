@@ -24,6 +24,7 @@ import { sendAlert } from "../alerting/send-alert.js";
 import { getCurrentSession } from "../../utils/session.js";
 import { countOpenByDirection, openPosition } from "../positions/track-position.js";
 import { saveScanLog } from "../persistence/save-scan-log.js";
+import { saveCandles } from "../persistence/save-candles.js";
 
 /**
  * ワークフロー・オーケストレーター  (PHASE_09)
@@ -135,6 +136,10 @@ export async function runSignalScan(
     { symbol, candles4h: candles4h.length, candles1h: candles1h.length },
     "Market data fetched"
   );
+
+  // ── PHASE_15: K 线持久化（供离线回测使用）────────────────────────────────
+  saveCandles(db, symbol, "4h", candles4h);
+  saveCandles(db, symbol, "1h", candles1h);
 
   // ── baselineAtr（近 50 本 4h 足の平均 Hi-Lo 幅）─────────────────────────
   const baselineWindow = candles4h.slice(-50);

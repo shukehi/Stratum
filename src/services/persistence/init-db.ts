@@ -60,6 +60,21 @@ export function initDb(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_candidates_created_at
       ON candidates(created_at);
+
+    CREATE TABLE IF NOT EXISTS candles (
+      symbol    TEXT    NOT NULL,
+      timeframe TEXT    NOT NULL,
+      timestamp INTEGER NOT NULL,
+      open      REAL    NOT NULL,
+      high      REAL    NOT NULL,
+      low       REAL    NOT NULL,
+      close     REAL    NOT NULL,
+      volume    REAL    NOT NULL,
+      PRIMARY KEY (symbol, timeframe, timestamp)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_candles_lookup
+      ON candles (symbol, timeframe, timestamp DESC);
   `);
 }
 
