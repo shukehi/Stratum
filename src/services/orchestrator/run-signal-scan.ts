@@ -2,6 +2,7 @@ import type { ExchangeClient } from "../../clients/exchange/ccxt-client.js";
 import type { LlmCallFn } from "../macro/assess-macro-overlay.js";
 import type { HttpFetchFn, TelegramConfig } from "../alerting/send-alert.js";
 import type { NewsItem } from "../../domain/news/news-item.js";
+import type { Candle } from "../../domain/market/candle.js";
 import type { AlertPayload } from "../../domain/signal/alert-payload.js";
 import type { StrategyConfig } from "../../app/config.js";
 import Database from "better-sqlite3";
@@ -25,6 +26,7 @@ import { getCurrentSession } from "../../utils/session.js";
 import { countOpenByDirection, openPosition } from "../positions/track-position.js";
 import { saveScanLog } from "../persistence/save-scan-log.js";
 import { saveCandles } from "../persistence/save-candles.js";
+import { detectDailyBias } from "../regime/detect-daily-bias.js";
 
 /**
  * ワークフロー・オーケストレーター  (PHASE_09)
@@ -117,10 +119,16 @@ export async function runSignalScan(
   // ── [PARALLEL] 市場データ + ニュース ──────────────────────────────────────
   // 取引所データ失敗は致命的（Promise.all がそのまま throw）。
   // ニュース失敗は非致命的（catch して空配列を返す）。
-  const [candles4h, candles1h, fundingRates, openInterest, spotTicker, news] =
+  const [candles4h, candles1h, candles1d, fundingRates, openInterest, spotTicker, news] =
     await Promise.all([
       fetchMarketData(client, symbol, "4h", config.marketDataLimit),
       fetchMarketData(client, symbol, "1h", config.marketDataLimit),
+      fetchMarketData(client, symbol, "1d", config.dailyDataLimit).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`1d candle fetch failed: ${msg}`);
+        logger.warn({ err }, "1d candle fetch failed, skipping daily bias");
+        return [] as Candle[];
+      }),
       fetchFundingRates(client, symbol, 10),
       fetchOpenInterest(client, symbol, 10),
       client.fetchSpotTicker(spotSymbol),
@@ -140,6 +148,19 @@ export async function runSignalScan(
   // ── PHASE_15: K 线持久化（供离线回测使用）────────────────────────────────
   saveCandles(db, symbol, "4h", candles4h);
   saveCandles(db, symbol, "1h", candles1h);
+  if (candles1d.length > 0) saveCandles(db, symbol, "1d", candles1d);
+
+  // ── PHASE_16: 日线趋势偏向（EMA20/50 方向过滤）──────────────────────────
+  const dailyBiasResult =
+    candles1d.length >= 50
+      ? detectDailyBias(candles1d, config.dailyEmaSeparationThreshold)
+      : null;
+  if (dailyBiasResult) {
+    logger.debug(
+      { bias: dailyBiasResult.bias, reason: dailyBiasResult.reason },
+      "PHASE_16 daily bias"
+    );
+  }
 
   // ── baselineAtr（近 50 本 4h 足の平均 Hi-Lo 幅）─────────────────────────
   const baselineWindow = candles4h.slice(-50);
@@ -182,6 +203,7 @@ export async function runSignalScan(
   const candidates = evaluateConsensus({
     symbol, setups, ctx, config, baselineAtr,
     openLongCount, openShortCount,
+    dailyBias: dailyBiasResult?.bias,
   });
   const candidatesFound = candidates.length;
   logger.info({ symbol, candidatesFound }, "PHASE_06 done");

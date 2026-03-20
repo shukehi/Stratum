@@ -22,4 +22,6 @@ export type ReasonCode =
   | "SESSION_LOW_LIQUIDITY_DISCOUNT"
   | "EVENT_WINDOW_WATCH_ONLY"
   | "MACRO_DOWNGRADED"
-  | "MACRO_BLOCKED";
+  | "MACRO_BLOCKED"
+  | "DAILY_TREND_COUNTER"   // 信号方向与日线趋势相反（已降级）
+  | "DAILY_TREND_ALIGNED";  // 信号方向与日线趋势一致（分数加成）

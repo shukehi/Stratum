@@ -5,7 +5,7 @@ import { logger } from "../../app/logger.js";
 export async function fetchMarketData(
   client: ExchangeClient,
   symbol: string,
-  timeframe: "4h" | "1h",
+  timeframe: "4h" | "1h" | "1d",
   limit: number
 ): Promise<Candle[]> {
   logger.debug({ symbol, timeframe, limit }, "Fetching market data");

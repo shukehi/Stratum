@@ -4,6 +4,7 @@ import type { MarketRegime } from "../../domain/regime/market-regime.js";
 import type { TradeCandidate, SignalGrade } from "../../domain/signal/trade-candidate.js";
 import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { StrategyConfig } from "../../app/config.js";
+import type { DailyBias } from "../../domain/market/daily-bias.js";
 import { computeRiskReward } from "../risk/compute-risk-reward.js";
 
 /**
@@ -21,6 +22,8 @@ export type ConsensusInput = {
   baselineAtr?: number;
   openLongCount?: number;
   openShortCount?: number;
+  /** 日线趋势偏向（PHASE_16）— 未传入时跳过日线过滤 */
+  dailyBias?: DailyBias;
 };
 
 /**
@@ -153,9 +156,28 @@ export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
       grade = downgradeGrade(grade);
     }
 
+    // ── 日线趋势过滤（PHASE_16）：逆势降级 ──────────────────────────────────
+    const { dailyBias } = input;
+    let dailyTrendCode: ReasonCode | null = null;
+    if (dailyBias && dailyBias !== "neutral") {
+      const isCounter =
+        (setup.direction === "long"  && dailyBias === "bearish") ||
+        (setup.direction === "short" && dailyBias === "bullish");
+      if (isCounter) {
+        grade = downgradeGrade(grade);
+        dailyTrendCode = "DAILY_TREND_COUNTER";
+      } else {
+        dailyTrendCode = "DAILY_TREND_ALIGNED";
+      }
+    }
+
     // ── 合并 reasonCodes ──────────────────────────────────────────────────────
     const mergedCodes: ReasonCode[] = [
-      ...new Set([...setup.reasonCodes, ...ctx.reasonCodes]),
+      ...new Set([
+        ...setup.reasonCodes,
+        ...ctx.reasonCodes,
+        ...(dailyTrendCode ? [dailyTrendCode] : []),
+      ]),
     ];
 
     candidates.push({

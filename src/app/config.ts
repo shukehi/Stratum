@@ -53,6 +53,10 @@ export type StrategyConfig = {
   readonly allowEventDrivenSignals: boolean;
   readonly maxNewsItemsForPrompt: number;
 
+  // --- 日线趋势过滤 ---
+  readonly dailyDataLimit: number;          // 拉取的日线 K 线数量
+  readonly dailyEmaSeparationThreshold: number; // EMA20/50 粘合阈值（默认 0.5%）
+
   // --- 校准 ---
   readonly calibrationMinSampleSize: number;
 };
@@ -103,6 +107,10 @@ export const strategyConfig = {
   minimumBtcRelevance: 6,
   allowEventDrivenSignals: false,
   maxNewsItemsForPrompt: 10,
+
+  // --- 日线趋势过滤 ---
+  dailyDataLimit: 100,                  // 100 根日线 ≈ 3 个月
+  dailyEmaSeparationThreshold: 0.005,   // EMA 间距 < 0.5% 视为粘合
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,
