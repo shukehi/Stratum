@@ -5,6 +5,9 @@ export async function withRetry<T>(
   maxAttempts: number = 3,
   delayMs: number = 1000
 ): Promise<T> {
+  if (maxAttempts <= 0) {
+    throw new Error(`withRetry: maxAttempts must be > 0, got ${maxAttempts}`);
+  }
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {

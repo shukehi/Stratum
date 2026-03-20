@@ -13,9 +13,11 @@ export interface ExchangeClient {
 
 export class CcxtClient implements ExchangeClient {
   private exchange: any;
+  private exchangeName: string;
   private spotSymbol: string;
 
   constructor(exchangeName: string, spotSymbol: string) {
+    this.exchangeName = exchangeName;
     this.spotSymbol = spotSymbol;
     // Lazy init - exchange created on first use
     this.exchange = null;
@@ -24,18 +26,13 @@ export class CcxtClient implements ExchangeClient {
   private async getExchange(): Promise<any> {
     if (!this.exchange) {
       const ccxt = await import("ccxt");
-      const ExchangeClass = (ccxt as any)[this.getExchangeName()];
+      const ExchangeClass = (ccxt as any)[this.exchangeName];
       if (!ExchangeClass) {
-        throw new Error(`Exchange not supported: ${this.getExchangeName()}`);
+        throw new Error(`Exchange not supported: ${this.exchangeName}`);
       }
       this.exchange = new ExchangeClass({ enableRateLimit: true });
     }
     return this.exchange;
-  }
-
-  private getExchangeName(): string {
-    // This will be set properly via constructor in real usage
-    return "binance";
   }
 
   async fetchOHLCV(symbol: string, timeframe: string, limit: number): Promise<Candle[]> {

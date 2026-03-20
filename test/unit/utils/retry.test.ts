@@ -31,4 +31,10 @@ describe("withRetry", () => {
     try { await withRetry(fn, 5, 0); } catch {}
     expect(fn).toHaveBeenCalledTimes(5);
   });
+
+  it("throws immediately with descriptive error when maxAttempts <= 0", async () => {
+    const fn = vi.fn().mockResolvedValue("ok");
+    await expect(withRetry(fn, 0, 0)).rejects.toThrow("maxAttempts must be > 0");
+    expect(fn).not.toHaveBeenCalled();
+  });
 });
