@@ -5,6 +5,7 @@ import type { TradeCandidate, SignalGrade } from "../../domain/signal/trade-cand
 import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { StrategyConfig } from "../../app/config.js";
 import type { DailyBias } from "../../domain/market/daily-bias.js";
+import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import { computeRiskReward } from "../risk/compute-risk-reward.js";
 
 /**
@@ -24,6 +25,8 @@ export type ConsensusInput = {
   openShortCount?: number;
   /** 日线趋势偏向（PHASE_16）— 未传入时跳过日线过滤 */
   dailyBias?: DailyBias;
+  /** CVD 订单流偏向（PHASE_18）— 未传入时跳过订单流过滤 */
+  orderFlowBias?: OrderFlowBias;
 };
 
 /**
@@ -171,12 +174,29 @@ export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
       }
     }
 
+    // ── 订单流确认（PHASE_18）：CVD 逆势降级 ─────────────────────────────────
+    // CVD 反映主动买卖力量对比，与信号方向相反时说明订单流不支持该方向
+    const { orderFlowBias } = input;
+    let orderFlowCode: ReasonCode | null = null;
+    if (orderFlowBias && orderFlowBias !== "neutral") {
+      const isCounter =
+        (setup.direction === "long"  && orderFlowBias === "bearish") ||
+        (setup.direction === "short" && orderFlowBias === "bullish");
+      if (isCounter) {
+        grade = downgradeGrade(grade);
+        orderFlowCode = "ORDER_FLOW_COUNTER";
+      } else {
+        orderFlowCode = "ORDER_FLOW_ALIGNED";
+      }
+    }
+
     // ── 合并 reasonCodes ──────────────────────────────────────────────────────
     const mergedCodes: ReasonCode[] = [
       ...new Set([
         ...setup.reasonCodes,
         ...ctx.reasonCodes,
-        ...(dailyTrendCode ? [dailyTrendCode] : []),
+        ...(dailyTrendCode  ? [dailyTrendCode]  : []),
+        ...(orderFlowCode   ? [orderFlowCode]   : []),
       ]),
     ];
 

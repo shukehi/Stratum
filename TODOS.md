@@ -14,36 +14,8 @@
 | PHASE_14 | CLI查询工具（report/positions/backtest） | 206d039 |
 | PHASE_15 | K线本地持久化 + 回测离线缓存 | d2ab713 |
 | PHASE_16 | 日线趋势过滤（市场结构法，摆高摆低） | 2609c4b |
-| PHASE_17 | Volume Profile 替换日线偏向（溢价/均衡/折价，588测试全通过） | — |
-
----
-
-## 📋 待开发
-
-### PHASE_18 — CVD 订单流确认层
-**优先级**: ⭐⭐⭐⭐ | **估时**: CC ~30分钟
-
-**背景**: 当前FVG和流动性扫描信号无法区分"真实机构力量"和"假突破"。
-CVD（累计成交量差）通过主动买卖量的对比，直接反映订单流方向，
-可过滤约40%的假信号。
-
-**交付物**:
-- [ ] `src/domain/market/order-flow.ts` — 类型定义
-  ```typescript
-  type CandleDelta = { timestamp: number; delta: number; cumDelta: number }
-  type OrderFlowBias = "bullish" | "bearish" | "neutral"
-  type OrderFlowResult = { bias: OrderFlowBias; cvdSlope: number; reason: string }
-  ```
-- [ ] `src/services/analysis/compute-cvd.ts` — 计算逻辑
-  - `approxDelta(candle)` → (close-open)/(high-low) × volume（Kaufman近似）
-  - `computeCVD(candles)` → CandleDelta[]（累计序列）
-  - `detectOrderFlowBias(candles, window?)` → OrderFlowResult
-- [ ] 更新 `ConsensusInput` 加入 `orderFlowBias?: OrderFlowBias`
-- [ ] 新增共识门槛：CVD与信号方向相反 → 降级
-- [ ] 新增 ReasonCode: `ORDER_FLOW_ALIGNED` / `ORDER_FLOW_COUNTER`
-- [ ] 更新 `run-signal-scan.ts` 计算CVD并传入共识引擎
-- [ ] 单元测试：delta计算、CVD累计、三种偏向场景
-- [ ] 更新 `ARCHITECTURE.md` PHASE_18完成状态
+| PHASE_17 | Volume Profile 替换日线偏向（溢价/均衡/折价，614测试全通过） | 11f3e72 |
+| PHASE_18 | CVD 订单流确认层（Kaufman近似，4h信号过滤，614测试全通过） | — |
 
 ---
 

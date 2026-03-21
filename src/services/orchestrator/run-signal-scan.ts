@@ -27,6 +27,7 @@ import { countOpenByDirection, openPosition } from "../positions/track-position.
 import { saveScanLog } from "../persistence/save-scan-log.js";
 import { saveCandles } from "../persistence/save-candles.js";
 import { detectDailyBias } from "../regime/detect-daily-bias.js";
+import { detectOrderFlowBias } from "../analysis/compute-cvd.js";
 
 /**
  * ワークフロー・オーケストレーター  (PHASE_09)
@@ -174,6 +175,17 @@ export async function runSignalScan(
     );
   }
 
+  // ── PHASE_18: CVD 订单流确认（4h K 线，窗口 20 根）──────────────────────
+  const orderFlowResult = detectOrderFlowBias(candles4h);
+  logger.debug(
+    {
+      bias: orderFlowResult.bias,
+      cvdSlope: orderFlowResult.cvdSlope.toFixed(4),
+      reason: orderFlowResult.reason,
+    },
+    "PHASE_18 order flow CVD"
+  );
+
   // ── baselineAtr（近 50 本 4h 足の平均 Hi-Lo 幅）─────────────────────────
   const baselineWindow = candles4h.slice(-50);
   const baselineAtr =
@@ -216,6 +228,7 @@ export async function runSignalScan(
     symbol, setups, ctx, config, baselineAtr,
     openLongCount, openShortCount,
     dailyBias: dailyBiasResult?.bias,
+    orderFlowBias: orderFlowResult.bias,
   });
   const candidatesFound = candidates.length;
   logger.info({ symbol, candidatesFound }, "PHASE_06 done");

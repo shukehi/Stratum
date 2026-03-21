@@ -24,4 +24,6 @@ export type ReasonCode =
   | "MACRO_DOWNGRADED"
   | "MACRO_BLOCKED"
   | "DAILY_TREND_COUNTER"   // 信号方向与日线趋势相反（已降级）
-  | "DAILY_TREND_ALIGNED";  // 信号方向与日线趋势一致（已标记，无额外加成）
+  | "DAILY_TREND_ALIGNED"   // 信号方向与日线趋势一致（已标记，无额外加成）
+  | "ORDER_FLOW_COUNTER"    // 信号方向与CVD订单流相反（已降级）—— PHASE_18
+  | "ORDER_FLOW_ALIGNED";   // 信号方向与CVD订单流一致（已标记，无额外加成）—— PHASE_18
