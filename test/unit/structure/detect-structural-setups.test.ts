@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectStructuralSetups } from "../../../src/services/structure/detect-structural-setups.js";
+import { detectStructuralSetups, applyEqualLevelBonus } from "../../../src/services/structure/detect-structural-setups.js";
 import { detectFvg } from "../../../src/services/structure/detect-fvg.js";
 import { detectLiquiditySweep, detectSwingPoints } from "../../../src/services/structure/detect-liquidity-sweep.js";
 import { applyConfluence } from "../../../src/services/structure/detect-confluence.js";
@@ -9,6 +9,7 @@ import { strategyConfig } from "../../../src/app/config.js";
 import type { Candle } from "../../../src/domain/market/candle.js";
 import type { MarketContext } from "../../../src/domain/market/market-context.js";
 import type { StructuralSetup } from "../../../src/domain/signal/structural-setup.js";
+import type { EqualLevel } from "../../../src/domain/market/equal-level.js";
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -522,5 +523,140 @@ describe("detectStructuralSetups — 集成", () => {
         expect(result.confirmationStatus).toBe("invalidated");
       }
     }
+  });
+});
+
+// ── PHASE_19: applyEqualLevelBonus ───────────────────────────────────────────
+
+describe("applyEqualLevelBonus (PHASE_19)", () => {
+  function makeSetup(
+    direction: "long" | "short",
+    entryLow: number,
+    entryHigh: number,
+    score = 65,
+  ): StructuralSetup {
+    return {
+      timeframe: "4h",
+      direction,
+      entryLow,
+      entryHigh,
+      stopLossHint: direction === "long" ? entryLow - 200 : entryHigh + 200,
+      takeProfitHint: direction === "long" ? entryHigh + 1000 : entryLow - 1000,
+      structureScore: score,
+      structureReason: "base",
+      invalidationReason: "test",
+      confluenceFactors: ["liquidity-sweep"],
+      confirmationStatus: "pending",
+      confirmationTimeframe: "1h",
+      reasonCodes: ["LIQUIDITY_SWEEP_CONFIRMED"],
+    };
+  }
+
+  function makeEqualLevel(
+    type: "high" | "low",
+    price: number,
+    touchCount = 2,
+  ): EqualLevel {
+    return {
+      type,
+      price,
+      touchCount,
+      firstTimestamp: 0,
+      lastTimestamp: 1,
+      toleranceAbsolute: price * 0.001, // 0.1% 容差
+    };
+  }
+
+  it("无等高等低时 setup 不变", () => {
+    const setup = makeSetup("long", 59000, 59200);
+    const result = applyEqualLevelBonus(setup, [], 12);
+    expect(result).toBe(setup); // 引用相等（未创建新对象）
+  });
+
+  it("long setup + 等低区域重叠 → structureScore 加成", () => {
+    const setup = makeSetup("long", 58900, 59100, 65);
+    const level = makeEqualLevel("low", 59000); // 59000 ± 59 落在 [58900, 59100] 内
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureScore).toBe(65 + 12);
+  });
+
+  it("short setup + 等高区域重叠 → structureScore 加成", () => {
+    const setup = makeSetup("short", 60500, 60700, 70);
+    const level = makeEqualLevel("high", 60600); // 60600 ± 60.6 落在 [60500, 60700] 内
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureScore).toBe(70 + 12);
+  });
+
+  it("long setup + 等高区域 → 方向不匹配，无加成", () => {
+    const setup = makeSetup("long", 60000, 60200);
+    const level = makeEqualLevel("high", 60100);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureScore).toBe(setup.structureScore);
+    expect(result.reasonCodes).not.toContain("EQUAL_LEVEL_LIQUIDITY");
+  });
+
+  it("short setup + 等低区域 → 方向不匹配，无加成", () => {
+    const setup = makeSetup("short", 60000, 60200);
+    const level = makeEqualLevel("low", 60100);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureScore).toBe(setup.structureScore);
+    expect(result.reasonCodes).not.toContain("EQUAL_LEVEL_LIQUIDITY");
+  });
+
+  it("等高等低区域不重叠时无加成", () => {
+    // setup 在 [59000, 59100]，等低在 60000 ± 60 → [59940, 60060]，不重叠
+    const setup = makeSetup("long", 59000, 59100);
+    const level = makeEqualLevel("low", 60000);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureScore).toBe(setup.structureScore);
+  });
+
+  it("命中后追加 EQUAL_LEVEL_LIQUIDITY reason code", () => {
+    const setup = makeSetup("long", 58900, 59100);
+    const level = makeEqualLevel("low", 59000);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.reasonCodes).toContain("EQUAL_LEVEL_LIQUIDITY");
+  });
+
+  it("原有 reason codes 保留", () => {
+    const setup = makeSetup("long", 58900, 59100);
+    const level = makeEqualLevel("low", 59000);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.reasonCodes).toContain("LIQUIDITY_SWEEP_CONFIRMED");
+  });
+
+  it("structureReason 追加等高等低描述", () => {
+    const setup = makeSetup("long", 58900, 59100);
+    const level = makeEqualLevel("low", 59000, 3);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureReason).toContain("等低区域×3次");
+    expect(result.structureReason).toContain("+12分");
+  });
+
+  it("多个重叠等级：取 touchCount 最高的作为代表", () => {
+    const setup = makeSetup("long", 58800, 59200);
+    const level2 = makeEqualLevel("low", 59000, 2);
+    const level5 = makeEqualLevel("low", 59050, 5); // touchCount 更高
+    const result = applyEqualLevelBonus(setup, [level2, level5], 12);
+    // 代表为 touchCount=5 的那个
+    expect(result.structureReason).toContain("×5次");
+  });
+
+  it("score 上限为 100", () => {
+    const setup = makeSetup("long", 58900, 59100, 95); // 接近上限
+    const level = makeEqualLevel("low", 59000);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    expect(result.structureScore).toBe(100); // min(100, 95+12) = 100
+  });
+
+  it("重复命中不重复追加 EQUAL_LEVEL_LIQUIDITY（Set 去重）", () => {
+    const setup: StructuralSetup = {
+      ...makeSetup("long", 58900, 59100),
+      reasonCodes: ["LIQUIDITY_SWEEP_CONFIRMED", "EQUAL_LEVEL_LIQUIDITY"],
+    };
+    const level = makeEqualLevel("low", 59000);
+    const result = applyEqualLevelBonus(setup, [level], 12);
+    const count = result.reasonCodes.filter(c => c === "EQUAL_LEVEL_LIQUIDITY").length;
+    expect(count).toBe(1); // 只有一个
   });
 });

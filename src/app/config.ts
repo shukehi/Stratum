@@ -59,6 +59,10 @@ export type StrategyConfig = {
   readonly vpBucketCount: number;        // VP 价格分桶数（默认 200）
   readonly vpValueAreaPercent: number;   // 价值区间覆盖比例（默认 0.70 = 70%）
 
+  // --- 等高等低（Equal Highs / Lows）---
+  readonly equalLevelTolerance: number;   // 价格容差比例（默认 0.001 = 0.1%）
+  readonly equalLevelBonus: number;       // 命中等高等低区域时的评分加成（默认 12）
+
   // --- 校准 ---
   readonly calibrationMinSampleSize: number;
 };
@@ -115,6 +119,10 @@ export const strategyConfig = {
   vpLookbackDays: 30,           // 用最近 30 根日线计算 VP（≈ 1 个月）
   vpBucketCount: 200,           // 200 个等宽价格桶
   vpValueAreaPercent: 0.70,     // 价值区间覆盖 70% 成交量（Market Profile 惯例）
+
+  // --- 等高等低（Equal Highs / Lows）---
+  equalLevelTolerance: 0.001,  // 0.1% 容差（BTC@50k ≈ ±50 USDT）
+  equalLevelBonus: 12,         // 高于 confluenceBonus(10)，体现更高密度止损聚集
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,
