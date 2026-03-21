@@ -30,6 +30,21 @@
 8. [PHASE_08_PERSISTENCE_AND_ALERTING.md](/Users/aries/Dve/crypto/Stratum/doc/phases/PHASE_08_PERSISTENCE_AND_ALERTING.md)
 9. [PHASE_09_WORKFLOWS_AND_REVIEW.md](/Users/aries/Dve/crypto/Stratum/doc/phases/PHASE_09_WORKFLOWS_AND_REVIEW.md)
 
+## 2A. 后续优化阶段
+
+以下阶段用于修正当前实现与“交易第一性原理闭环”之间的偏差。
+
+1. [PHASE_30_MECHANISM_REGIME_REFACTOR.md](/Users/aries/Dve/crypto/Stratum/doc/phases/PHASE_30_MECHANISM_REGIME_REFACTOR.md)
+2. [PHASE_31_CAUSAL_GATING_AND_CANDIDATE_MACRO.md](/Users/aries/Dve/crypto/Stratum/doc/phases/PHASE_31_CAUSAL_GATING_AND_CANDIDATE_MACRO.md)
+3. [PHASE_32_ATTRIBUTION_AND_FULL_CHAIN_BACKTEST.md](/Users/aries/Dve/crypto/Stratum/doc/phases/PHASE_32_ATTRIBUTION_AND_FULL_CHAIN_BACKTEST.md)
+4. [PHASE_33_POSITION_SIZING_AND_PORTFOLIO_RISK.md](/Users/aries/Dve/crypto/Stratum/doc/phases/PHASE_33_POSITION_SIZING_AND_PORTFOLIO_RISK.md)
+
+配套文档：
+
+- [OPTIMIZATION_PLAN.md](/Users/aries/Dve/crypto/Stratum/doc/OPTIMIZATION_PLAN.md)
+- [METRICS_AND_ACCEPTANCE.md](/Users/aries/Dve/crypto/Stratum/doc/METRICS_AND_ACCEPTANCE.md)
+- [OBSERVATION_RUNBOOK.md](/Users/aries/Dve/crypto/Stratum/doc/OBSERVATION_RUNBOOK.md)
+
 ## 3. 每阶段固定格式
 
 每个阶段文档都包含：

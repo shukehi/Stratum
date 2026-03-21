@@ -4,6 +4,8 @@ import { strategyConfig } from "../../../src/app/config.js";
 describe("strategyConfig", () => {
   it("minimumRiskReward is 2.5 (derived from 30-35% win rate assumption)", () => {
     expect(strategyConfig.minimumRiskReward).toBe(2.5);
+    expect(strategyConfig.riskPerTrade).toBe(0.01);
+    expect(strategyConfig.accountSizeUsd).toBe(1000);
   });
 
   it("has correct participant pressure thresholds", () => {
@@ -17,6 +19,11 @@ describe("strategyConfig", () => {
     expect(strategyConfig.enableSessionAdjustment).toBe(true);
     expect(strategyConfig.sessionDiscountFactor).toBe(0.8);
     expect(strategyConfig.sessionPremiumFactor).toBe(1.1);
+  });
+
+  it("has correct portfolio risk constraints", () => {
+    expect(strategyConfig.maxSameDirectionOpenRiskPercent).toBe(0.02);
+    expect(strategyConfig.maxPortfolioOpenRiskPercent).toBe(0.03);
   });
 
   it("has correct LLM constraints", () => {

@@ -20,6 +20,7 @@ export function buildMarketContext(
 
   const summary =
     `Regime: ${regimeDecision.regime} (${regimeDecision.confidence}%) | ` +
+    `Driver: ${regimeDecision.driverType ?? "unclear"} (${regimeDecision.driverConfidence ?? 0}%) | ` +
     `Participants: ${pressure.bias} / ${pressure.pressureType} (${pressure.confidence}%) | ` +
     `Session: ${session}`;
 
@@ -27,6 +28,8 @@ export function buildMarketContext(
     regime: regimeDecision.regime,
     regimeConfidence: regimeDecision.confidence,
     regimeReasons: regimeDecision.reasons,
+    marketDriverType: regimeDecision.driverType,
+    marketDriverConfidence: regimeDecision.driverConfidence,
     participantBias: pressure.bias,
     participantPressureType: pressure.pressureType,
     participantConfidence: pressure.confidence,

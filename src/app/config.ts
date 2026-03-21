@@ -15,6 +15,7 @@ export type StrategyConfig = {
   // --- 风险回报 ---
   readonly minimumRiskReward: number;
   readonly riskPerTrade: number;
+  readonly accountSizeUsd: number;
 
   // --- 市场状态 ---
   readonly minRegimeConfidence: number;
@@ -45,6 +46,8 @@ export type StrategyConfig = {
   // --- 风控门槛 ---
   readonly maxStopDistanceAtr: number;
   readonly maxCorrelatedSignalsPerDirection: number;
+  readonly maxSameDirectionOpenRiskPercent: number;
+  readonly maxPortfolioOpenRiskPercent: number;
 
   // --- 事件与语义 ---
   readonly recentEventWatchWindowHours: number;
@@ -77,6 +80,7 @@ export const strategyConfig = {
   // --- 风险回报 ---
   minimumRiskReward: 2.5,
   riskPerTrade: 0.01,
+  accountSizeUsd: 1000,
 
   // --- 市场状态 ---
   minRegimeConfidence: 60,
@@ -107,6 +111,8 @@ export const strategyConfig = {
   // --- 风控门槛 ---
   maxStopDistanceAtr: 2.5,
   maxCorrelatedSignalsPerDirection: 2,
+  maxSameDirectionOpenRiskPercent: 0.02,
+  maxPortfolioOpenRiskPercent: 0.03,
 
   // --- 事件与语义 ---
   recentEventWatchWindowHours: 12,

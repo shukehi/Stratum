@@ -1,6 +1,30 @@
 import { describe, it, expect } from "vitest";
-import { computePositionSize } from "../../../src/services/risk/compute-position-size.js";
+import {
+  computePositionSize,
+  buildPositionSizingSummary,
+} from "../../../src/services/risk/compute-position-size.js";
 import { strategyConfig } from "../../../src/app/config.js";
+import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
+
+function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate {
+  return {
+    symbol: "BTCUSDT",
+    direction: "long",
+    timeframe: "4h",
+    entryLow: 59800,
+    entryHigh: 60000,
+    stopLoss: 58800,
+    takeProfit: 63000,
+    riskReward: 2.5,
+    signalGrade: "high-conviction",
+    regimeAligned: true,
+    participantAligned: true,
+    structureReason: "FVG",
+    contextReason: "trend",
+    reasonCodes: [],
+    ...overrides,
+  };
+}
 
 // strategyConfig.riskPerTrade = 0.01 (1%)
 
@@ -62,5 +86,49 @@ describe("computePositionSize — 边界保护", () => {
   it("accountSize=0 → 返回 0（零账户）", () => {
     // riskAmount=0 → positionSize=0
     expect(computePositionSize(0, 60000, 58800, strategyConfig)).toBe(0);
+  });
+});
+
+describe("buildPositionSizingSummary", () => {
+  it("账户规模存在时返回可执行仓位建议", () => {
+    const summary = buildPositionSizingSummary({
+      candidate: makeCandidate(),
+      config: { ...strategyConfig, accountSizeUsd: 100_000 },
+      sameDirectionExposureCount: 1,
+      sameDirectionOpenRiskPercent: 0.01,
+      portfolioOpenRiskPercent: 0.02,
+    });
+    expect(summary.status).toBe("available");
+    expect(summary.riskAmount).toBeCloseTo(1_000, 2);
+    expect(summary.recommendedPositionSize).toBeGreaterThan(0);
+    expect(summary.projectedSameDirectionRiskPercent).toBeCloseTo(0.02, 5);
+    expect(summary.projectedPortfolioRiskPercent).toBeCloseTo(0.03, 5);
+  });
+
+  it("缺失账户规模时优雅降级，但保留风险百分比摘要", () => {
+    const summary = buildPositionSizingSummary({
+      candidate: makeCandidate(),
+      config: { ...strategyConfig, accountSizeUsd: 0 },
+      sameDirectionExposureCount: 0,
+      sameDirectionOpenRiskPercent: 0,
+      portfolioOpenRiskPercent: 0.01,
+    });
+    expect(summary.status).toBe("unavailable");
+    expect(summary.reason).toBe("account_size_missing");
+    expect(summary.recommendedPositionSize).toBeUndefined();
+    expect(summary.accountRiskPercent).toBe(strategyConfig.riskPerTrade);
+    expect(summary.projectedPortfolioRiskPercent).toBeCloseTo(0.02, 5);
+  });
+
+  it("止损无效时返回不可计算", () => {
+    const summary = buildPositionSizingSummary({
+      candidate: makeCandidate({ stopLoss: 59900 }),
+      config: { ...strategyConfig, accountSizeUsd: 100_000 },
+      sameDirectionExposureCount: 0,
+      sameDirectionOpenRiskPercent: 0,
+      portfolioOpenRiskPercent: 0,
+    });
+    expect(summary.status).toBe("unavailable");
+    expect(summary.reason).toBe("invalid_stop_distance");
   });
 });

@@ -35,6 +35,18 @@ type CandidateRow = {
   macro_reason: string | null;
   reason_codes: string;
   alert_status: string;
+  macro_action: string | null;
+  confirmation_status: string | null;
+  daily_bias: string | null;
+  order_flow_bias: string | null;
+  regime: string | null;
+  regime_confidence: number | null;
+  market_driver_type: string | null;
+  participant_bias: string | null;
+  participant_pressure_type: string | null;
+  participant_confidence: number | null;
+  basis_divergence: number;
+  liquidity_session: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -60,16 +72,18 @@ function rowToPayload(row: CandidateRow): AlertPayload {
 
   // marketContext はストアしていないため、最小限のプレースホルダーを返す
   const marketContext: MarketContext = {
-    regime: "trend",
-    regimeConfidence: 0,
+    regime: (row.regime as MarketContext["regime"]) ?? "trend",
+    regimeConfidence: row.regime_confidence ?? 0,
     regimeReasons: [],
-    participantBias: "balanced",
-    participantPressureType: "none",
-    participantConfidence: 0,
+    marketDriverType: row.market_driver_type as MarketContext["marketDriverType"],
+    participantBias: (row.participant_bias as MarketContext["participantBias"]) ?? "balanced",
+    participantPressureType:
+      (row.participant_pressure_type as MarketContext["participantPressureType"]) ?? "none",
+    participantConfidence: row.participant_confidence ?? 0,
     participantRationale: "",
     spotPerpBasis: 0,
-    basisDivergence: false,
-    liquiditySession: "ny_close",
+    basisDivergence: row.basis_divergence === 1,
+    liquiditySession: (row.liquidity_session as MarketContext["liquiditySession"]) ?? "ny_close",
     summary: "",
     reasonCodes: [],
   };

@@ -4,6 +4,10 @@ import type { HttpFetchFn, TelegramConfig } from "../alerting/send-alert.js";
 import type { NewsItem } from "../../domain/news/news-item.js";
 import type { Candle } from "../../domain/market/candle.js";
 import type { AlertPayload } from "../../domain/signal/alert-payload.js";
+import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
+import type { ReasonCode } from "../../domain/common/reason-code.js";
+import type { DailyBias } from "../../domain/market/daily-bias.js";
+import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import type { StrategyConfig } from "../../app/config.js";
 import Database from "better-sqlite3";
 import { strategyConfig } from "../../app/config.js";
@@ -15,19 +19,27 @@ import { fetchNews as defaultFetchNews } from "../macro/fetch-news.js";
 import { detectMarketRegime } from "../regime/detect-market-regime.js";
 import { assessParticipantPressure } from "../participants/assess-participant-pressure.js";
 import { buildMarketContext } from "../participants/build-market-context.js";
-import { detectStructuralSetups } from "../structure/detect-structural-setups.js";
-import { evaluateConsensus } from "../consensus/evaluate-consensus.js";
+import { isTradableContext } from "../participants/is-tradable-context.js";
+import { analyzeStructuralSetups } from "../structure/detect-structural-setups.js";
+import { analyzeConsensus } from "../consensus/evaluate-consensus.js";
 import { assessMacroOverlay } from "../macro/assess-macro-overlay.js";
 import { applyMacroOverlay } from "../macro/apply-macro-overlay.js";
-import { saveCandidate, updateAlertStatus } from "../persistence/save-candidate.js";
+import {
+  saveCandidate,
+  saveCandidateSnapshot,
+  updateCandidateSnapshotOutcome,
+  updateAlertStatus,
+} from "../persistence/save-candidate.js";
 import { findCandidate } from "../persistence/load-candidates.js";
 import { sendAlert } from "../alerting/send-alert.js";
 import { getCurrentSession } from "../../utils/session.js";
-import { countOpenByDirection, openPosition } from "../positions/track-position.js";
+import { getOpenRiskSummary, openPosition } from "../positions/track-position.js";
 import { saveScanLog } from "../persistence/save-scan-log.js";
 import { saveCandles } from "../persistence/save-candles.js";
 import { detectDailyBias } from "../regime/detect-daily-bias.js";
 import { detectOrderFlowBias } from "../analysis/compute-cvd.js";
+import { buildPositionSizingSummary } from "../risk/compute-position-size.js";
+import { evaluateExposureGate } from "../risk/evaluate-exposure-gate.js";
 
 /**
  * ワークフロー・オーケストレーター  (PHASE_09)
@@ -39,10 +51,11 @@ import { detectOrderFlowBias } from "../analysis/compute-cvd.js";
  *   PHASE_03  detectMarketRegime       → RegimeDecision
  *   PHASE_04  assessParticipantPressure → ParticipantPressure
  *             buildMarketContext        → MarketContext
+ *             isTradableContext         → pre-structure gate
  *   PHASE_05  detectStructuralSetups   → StructuralSetup[]
  *   PHASE_06  evaluateConsensus        → TradeCandidate[]
- *   PHASE_07  assessMacroOverlay       → MacroOverlayDecision
- *             applyMacroOverlay        → TradeCandidate[] (フィルタ後)
+ *   PHASE_07  assessMacroOverlay       → MacroOverlayDecision (per candidate)
+ *             applyMacroOverlay        → TradeCandidate[] (filtered per candidate)
  *   PHASE_08  saveCandidate + sendAlert → DB + Telegram
  *
  * エラー分離ポリシー:
@@ -90,6 +103,15 @@ export type SignalScanResult = {
   alertsSkipped: number;
   /** マクロ評価アクション */
   macroAction: "pass" | "downgrade" | "block" | "error";
+  skipStage?: "context_gate" | "structure" | "consensus" | "macro";
+  skipReasonCode?: ReasonCode;
+  regime?: string;
+  participantPressureType?: string;
+  dailyBias?: DailyBias;
+  orderFlowBias?: OrderFlowBias;
+  basisDivergence?: boolean;
+  marketDriverType?: string;
+  liquiditySession?: string;
   /** 非致命的エラーのメッセージリスト */
   errors: string[];
 };
@@ -195,9 +217,18 @@ export async function runSignalScan(
       : 0;
 
   // ── PHASE_03: 市場レジーム検出 ─────────────────────────────────────────
-  const regimeDecision = detectMarketRegime(candles4h, config);
+  const regimeDecision = detectMarketRegime(candles4h, config, {
+    fundingRates,
+    openInterest,
+    spotPrice: spotTicker.last,
+  });
   logger.debug(
-    { regime: regimeDecision.regime, confidence: regimeDecision.confidence },
+    {
+      regime: regimeDecision.regime,
+      confidence: regimeDecision.confidence,
+      driverType: regimeDecision.driverType,
+      driverConfidence: regimeDecision.driverConfidence,
+    },
     "PHASE_03 done"
   );
 
@@ -216,20 +247,57 @@ export async function runSignalScan(
     "PHASE_04 done"
   );
 
+  const tradableContext = isTradableContext(ctx, config);
+  if (!tradableContext.tradable) {
+    logger.info(
+      { symbol, reason: tradableContext.reason, reasonCode: tradableContext.reasonCode },
+      "PHASE_31 context gate blocked structural scan"
+    );
+    const gatedResult: SignalScanResult = {
+      symbol,
+      scannedAt,
+      candidatesFound: 0,
+      candidatesAfterMacro: 0,
+      alertsSent: 0,
+      alertsFailed: 0,
+      alertsSkipped: 0,
+      macroAction: "pass",
+      skipStage: "context_gate",
+      skipReasonCode: tradableContext.reasonCode,
+      regime: ctx.regime,
+      participantPressureType: ctx.participantPressureType,
+      dailyBias: dailyBiasResult?.bias,
+      orderFlowBias: orderFlowResult.bias,
+      basisDivergence: ctx.basisDivergence,
+      marketDriverType: ctx.marketDriverType,
+      liquiditySession: ctx.liquiditySession,
+      errors,
+    };
+    saveScanLog(db, gatedResult);
+    return gatedResult;
+  }
+
   // ── PHASE_05: 構造トリガー検出 ────────────────────────────────────────
-  const setups = detectStructuralSetups(candles4h, candles1h, ctx, config);
+  const structuralAnalysis = analyzeStructuralSetups(candles4h, candles1h, ctx, config);
+  const setups = structuralAnalysis.setups;
   logger.debug({ setupCount: setups.length }, "PHASE_05 done");
 
   // ── PHASE_06: コンセンサス & リスクエンジン ───────────────────────────
   // PHASE_10-B: DB から実際の開仓数を取得して相関性暴露制限を実効化
-  const openLongCount = countOpenByDirection(db, "long");
-  const openShortCount = countOpenByDirection(db, "short");
-  const candidates = evaluateConsensus({
+  const openLongExposure = getOpenRiskSummary(db, "long");
+  const openShortExposure = getOpenRiskSummary(db, "short");
+  const portfolioExposure = getOpenRiskSummary(db);
+  const consensusAnalysis = analyzeConsensus({
     symbol, setups, ctx, config, baselineAtr,
-    openLongCount, openShortCount,
+    openLongCount: openLongExposure.openCount,
+    openShortCount: openShortExposure.openCount,
+    openLongRiskPercent: openLongExposure.openRiskPercent,
+    openShortRiskPercent: openShortExposure.openRiskPercent,
+    portfolioOpenRiskPercent: portfolioExposure.openRiskPercent,
     dailyBias: dailyBiasResult?.bias,
     orderFlowBias: orderFlowResult.bias,
   });
+  const candidates = consensusAnalysis.candidates;
   const candidatesFound = candidates.length;
   logger.info({ symbol, candidatesFound }, "PHASE_06 done");
 
@@ -245,6 +313,18 @@ export async function runSignalScan(
       alertsFailed: 0,
       alertsSkipped: 0,
       macroAction: "pass",
+      skipStage: setups.length === 0 ? "structure" : "consensus",
+      skipReasonCode:
+        setups.length === 0
+          ? structuralAnalysis.skipReasonCode
+          : consensusAnalysis.skipReasonCode,
+      regime: ctx.regime,
+      participantPressureType: ctx.participantPressureType,
+      dailyBias: dailyBiasResult?.bias,
+      orderFlowBias: orderFlowResult.bias,
+      basisDivergence: ctx.basisDivergence,
+      marketDriverType: ctx.marketDriverType,
+      liquiditySession: ctx.liquiditySession,
       errors,
     };
     saveScanLog(db, emptyResult);
@@ -253,31 +333,127 @@ export async function runSignalScan(
 
   // ── PHASE_07: マクロオーバーレイ ──────────────────────────────────────
   let macroAction: SignalScanResult["macroAction"] = "pass";
-  let finalCandidates = candidates;
+  let macroResults: Array<{
+    candidate: (typeof candidates)[number];
+    decision: Awaited<ReturnType<typeof assessMacroOverlay>>["decision"] | null;
+    filtered: TradeCandidate[];
+  }> = [];
 
   try {
-    const { decision } = await assessMacroOverlay(news, config, llmCall);
-    macroAction = decision.action;
-    finalCandidates = applyMacroOverlay(candidates, decision);
+    macroResults = await Promise.all(
+      candidates.map(async (candidate) => {
+        const { decision } = await assessMacroOverlay(news, candidate, config, llmCall);
+        return {
+          candidate,
+          decision,
+          filtered: applyMacroOverlay([candidate], decision),
+        };
+      })
+    );
+    const macroDecisions = macroResults
+      .map((result) => result.decision?.action)
+      .filter((action): action is "pass" | "downgrade" | "block" => action !== undefined);
+    macroAction = aggregateMacroAction(
+      macroDecisions
+    );
     logger.info(
-      { macroAction, candidatesAfterMacro: finalCandidates.length },
+      {
+        macroAction,
+        candidatesAfterMacro: macroResults.reduce(
+          (count, result) => count + result.filtered.length,
+          0
+        ),
+        macroDecisions,
+      },
       "PHASE_07 done"
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     errors.push(`macro overlay failed: ${msg}`);
     macroAction = "error";
+    macroResults = candidates.map((candidate) => ({
+      candidate,
+      decision: null,
+      filtered: [candidate],
+    }));
     // マクロ評価失敗 → 全候補を通過させて続行（保守的フォールバック）
     logger.warn({ err }, "Macro overlay failed, proceeding with all candidates");
   }
 
-  const candidatesAfterMacro = finalCandidates.length;
+  const candidatesAfterMacro = macroResults.reduce(
+    (count, result) => count + result.filtered.length,
+    0
+  );
   let alertsSent = 0;
   let alertsFailed = 0;
   let alertsSkipped = 0;
 
-  // ── PHASE_08: 永続化 + アラート送信 ──────────────────────────────────
-  for (const candidate of finalCandidates) {
+  for (const result of macroResults) {
+    const sameDirectionExposure = getOpenRiskSummary(
+      db,
+      result.candidate.direction
+    );
+    const currentPortfolioExposure = getOpenRiskSummary(db);
+    const snapshotCandidate =
+      result.decision?.action === "block"
+        ? applyMacroDecisionToCandidate(result.candidate, result.decision)
+        : result.filtered[0] ?? result.candidate;
+    const positionSizing = buildPositionSizingSummary({
+      candidate: snapshotCandidate,
+      config,
+      sameDirectionExposureCount: sameDirectionExposure.openCount,
+      sameDirectionOpenRiskPercent: sameDirectionExposure.openRiskPercent,
+      portfolioOpenRiskPercent: currentPortfolioExposure.openRiskPercent,
+    });
+
+    const snapshotPayload: AlertPayload = {
+      candidate: snapshotCandidate,
+      marketContext: ctx,
+      alertStatus: result.decision?.action === "block" ? "blocked_by_macro" : "pending",
+      createdAt: scannedAt,
+    };
+
+    const snapshotCandidateId = saveCandidateSnapshot(db, snapshotPayload, {
+      macroAction: result.decision?.action ?? "error",
+      confirmationStatus: inferConfirmationStatus(snapshotCandidate.reasonCodes),
+      dailyBias: dailyBiasResult?.bias,
+      orderFlowBias: orderFlowResult.bias,
+      positionSizing,
+      executionOutcome:
+        result.decision?.action === "block" ? "blocked_by_macro" : "pending",
+      executionReasonCode:
+        result.decision?.action === "block" ? "MACRO_BLOCKED" : undefined,
+    });
+
+    if (result.filtered.length === 0) {
+      continue;
+    }
+
+    // ── PHASE_08: 永続化 + アラート送信 ────────────────────────────────
+    const candidate = result.filtered[0];
+    const executionExposureGate = evaluateExposureGate({
+      sameDirectionExposureCount: sameDirectionExposure.openCount,
+      sameDirectionOpenRiskPercent: sameDirectionExposure.openRiskPercent,
+      portfolioOpenRiskPercent: currentPortfolioExposure.openRiskPercent,
+      config,
+    });
+    if (!executionExposureGate.allowed) {
+      updateCandidateSnapshotOutcome(db, snapshotCandidateId, "skipped_execution_gate", {
+        alertStatus: "skipped_execution_gate",
+        executionReasonCode: executionExposureGate.reasonCode,
+      });
+      alertsSkipped++;
+      logger.info(
+        {
+          symbol: candidate.symbol,
+          direction: candidate.direction,
+          reasonCode: executionExposureGate.reasonCode,
+        },
+        "Candidate skipped at execution due to live exposure gate"
+      );
+      continue;
+    }
+
     // 重複チェック: 同一シグナルが既に "sent" の場合はスキップ
     const existing = findCandidate(
       db,
@@ -287,6 +463,10 @@ export async function runSignalScan(
       candidate.entryHigh
     );
     if (existing?.alertStatus === "sent") {
+      updateCandidateSnapshotOutcome(db, snapshotCandidateId, "skipped_duplicate", {
+        alertStatus: "skipped_duplicate",
+        executionReasonCode: "already_sent",
+      });
       alertsSkipped++;
       logger.debug(
         { symbol: candidate.symbol, direction: candidate.direction },
@@ -303,10 +483,18 @@ export async function runSignalScan(
     };
 
     // 永続化（INSERT OR REPLACE）
-    saveCandidate(db, payload);
+    saveCandidate(db, payload, {
+      macroAction: result.decision?.action ?? "error",
+      confirmationStatus: inferConfirmationStatus(candidate.reasonCodes),
+      dailyBias: dailyBiasResult?.bias,
+      orderFlowBias: orderFlowResult.bias,
+      positionSizing,
+    });
 
     // Telegram アラート送信
-    const ok = await sendAlert(payload, telegramConfig, httpFetch);
+    const ok = await sendAlert(payload, telegramConfig, httpFetch, {
+      positionSizing,
+    });
     const finalStatus = ok ? "sent" : "failed";
     updateAlertStatus(
       db,
@@ -316,11 +504,19 @@ export async function runSignalScan(
       candidate.entryHigh,
       finalStatus
     );
+    updateCandidateSnapshotOutcome(db, snapshotCandidateId, finalStatus, {
+      alertStatus: finalStatus,
+    });
 
     if (ok) {
       alertsSent++;
       // PHASE_10-B: アラート送信成功 → 仓位を記録（相関性暴露カウントを更新）
-      openPosition(db, candidate, scannedAt);
+      openPosition(db, candidate, scannedAt, {
+        recommendedPositionSize: positionSizing.recommendedPositionSize,
+        recommendedBaseSize: positionSizing.recommendedBaseSize,
+        riskAmount: positionSizing.riskAmount,
+        accountRiskPercent: positionSizing.accountRiskPercent,
+      });
       logger.info(
         { symbol: candidate.symbol, direction: candidate.direction, grade: candidate.signalGrade },
         "Alert sent"
@@ -349,6 +545,15 @@ export async function runSignalScan(
     alertsFailed,
     alertsSkipped,
     macroAction,
+    skipStage: candidatesAfterMacro === 0 && macroAction === "block" ? "macro" : undefined,
+    skipReasonCode: candidatesAfterMacro === 0 && macroAction === "block" ? "MACRO_BLOCKED" : undefined,
+    regime: ctx.regime,
+    participantPressureType: ctx.participantPressureType,
+    dailyBias: dailyBiasResult?.bias,
+    orderFlowBias: orderFlowResult.bias,
+    basisDivergence: ctx.basisDivergence,
+    marketDriverType: ctx.marketDriverType,
+    liquiditySession: ctx.liquiditySession,
     errors,
   };
 
@@ -356,4 +561,33 @@ export async function runSignalScan(
   saveScanLog(db, result);
 
   return result;
+}
+
+function aggregateMacroAction(
+  actions: Array<"pass" | "downgrade" | "block">
+): SignalScanResult["macroAction"] {
+  if (actions.includes("block")) return "block";
+  if (actions.includes("downgrade")) return "downgrade";
+  return "pass";
+}
+
+function inferConfirmationStatus(
+  reasonCodes: ReasonCode[]
+): "pending" | "confirmed" | "invalidated" {
+  if (reasonCodes.includes("STRUCTURE_CONFIRMATION_INVALIDATED")) return "invalidated";
+  if (reasonCodes.includes("STRUCTURE_CONFIRMATION_PENDING")) return "pending";
+  return "confirmed";
+}
+
+function applyMacroDecisionToCandidate(
+  candidate: TradeCandidate,
+  decision: NonNullable<
+    Awaited<ReturnType<typeof assessMacroOverlay>>["decision"]
+  >
+): TradeCandidate {
+  return {
+    ...candidate,
+    macroReason: decision.reason,
+    reasonCodes: [...new Set([...candidate.reasonCodes, ...decision.reasonCodes])],
+  };
 }

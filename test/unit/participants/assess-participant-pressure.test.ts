@@ -241,6 +241,8 @@ describe("buildMarketContext", () => {
     expect(ctx.regime).toBe(regimeDecision.regime);
     expect(ctx.regimeConfidence).toBe(regimeDecision.confidence);
     expect(ctx.regimeReasons).toEqual(regimeDecision.reasons);
+    expect(ctx.marketDriverType).toBe(regimeDecision.driverType);
+    expect(ctx.marketDriverConfidence).toBe(regimeDecision.driverConfidence);
     expect(ctx.participantBias).toBe(pressure.bias);
     expect(ctx.participantPressureType).toBe(pressure.pressureType);
     expect(ctx.participantConfidence).toBe(pressure.confidence);

@@ -1,7 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { runBacktest } from "../../../src/services/backtest/run-backtest.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  runBacktest,
+  generateFullChainBacktestSignals,
+} from "../../../src/services/backtest/run-backtest.js";
 import type { BacktestSignal } from "../../../src/domain/backtest/backtest-types.js";
 import type { Candle } from "../../../src/domain/market/candle.js";
+import { strategyConfig } from "../../../src/app/config.js";
+import * as structureModule from "../../../src/services/structure/detect-structural-setups.js";
+import * as consensusModule from "../../../src/services/consensus/evaluate-consensus.js";
+import * as macroModule from "../../../src/services/macro/assess-macro-overlay.js";
+import * as regimeModule from "../../../src/services/regime/detect-market-regime.js";
+import * as participantModule from "../../../src/services/participants/assess-participant-pressure.js";
 
 // ── テスト夾具 ────────────────────────────────────────────────────────────
 
@@ -272,6 +281,715 @@ describe("runBacktest — 複数シグナル", () => {
     const trades = runBacktest([s1, s2], candles);
     expect(trades[0].status).toBe("closed_tp");
     expect(trades[1].status).toBe("closed_sl"); // SL=106, high=125 → SL ヒット
+  });
+});
+
+describe("generateFullChainBacktestSignals", () => {
+  it("会按真实过滤顺序保留被 macro block 的样本", async () => {
+    const baseTs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const candles4h: Candle[] = [
+      ...Array.from({ length: 52 }, (_, i) => ({
+        timestamp: baseTs + i * 4 * 60 * 60 * 1000,
+        open: 60000 + i * 40,
+        high: 60800 + i * 40,
+        low: 59700 + i * 40,
+        close: 60400 + i * 40,
+        volume: 1000 + i * 10,
+      })),
+      {
+        timestamp: baseTs + 52 * 4 * 60 * 60 * 1000,
+        open: 62100,
+        high: 62600,
+        low: 61600,
+        close: 62500,
+        volume: 1600,
+      },
+      {
+        timestamp: baseTs + 53 * 4 * 60 * 60 * 1000,
+        open: 62900,
+        high: 63600,
+        low: 62800,
+        close: 63500,
+        volume: 1700,
+      },
+      {
+        timestamp: baseTs + 54 * 4 * 60 * 60 * 1000,
+        open: 63300,
+        high: 63900,
+        low: 63100,
+        close: 63700,
+        volume: 1750,
+      },
+    ];
+    const candles1h: Candle[] = [
+      ...Array.from({ length: 220 }, (_, i) => ({
+        timestamp: baseTs + i * 60 * 60 * 1000,
+        open: 60000 + i * 10,
+        high: 60200 + i * 10,
+        low: 59800 + i * 10,
+        close: 60100 + i * 10,
+        volume: 300,
+      })),
+      {
+        timestamp: baseTs + 54 * 4 * 60 * 60 * 1000,
+        open: 63350,
+        high: 63650,
+        low: 62400,
+        close: 63580,
+        volume: 500,
+      },
+    ];
+    const candles1d: Candle[] = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: baseTs + i * 24 * 60 * 60 * 1000,
+      open: 56000 + i * 120,
+      high: 57000 + i * 120,
+      low: 55000 + i * 120,
+      close: 56500 + i * 120,
+      volume: 10000,
+    }));
+
+    const structureSpy = vi.spyOn(structureModule, "analyzeStructuralSetups").mockReturnValue({
+      setups: [
+        {
+          timeframe: "4h",
+          direction: "long",
+          entryLow: 62450,
+          entryHigh: 62600,
+          stopLossHint: 61800,
+          takeProfitHint: 64000,
+          structureScore: 72,
+          structureReason: "Bullish FVG",
+          invalidationReason: "1h close below 61800",
+          confluenceFactors: ["fvg", "liquidity-sweep"],
+          confirmationStatus: "confirmed",
+          confirmationTimeframe: "1h",
+          reasonCodes: [],
+        },
+      ],
+    });
+    const consensusSpy = vi.spyOn(consensusModule, "analyzeConsensus").mockReturnValue({
+      candidates: [
+        {
+          symbol: "BTCUSDT",
+          direction: "long",
+          timeframe: "4h",
+          entryLow: 62450,
+          entryHigh: 62600,
+          stopLoss: 61800,
+          takeProfit: 64000,
+          riskReward: 2.0,
+          regimeAligned: true,
+          participantAligned: true,
+          structureReason: "Bullish FVG",
+          contextReason: "trend",
+          signalGrade: "high-conviction",
+          reasonCodes: [],
+        },
+      ],
+    });
+    const macroSpy = vi.spyOn(macroModule, "assessMacroOverlay").mockResolvedValue({
+      assessment: {
+        macroBias: "bearish",
+        confidenceScore: 9,
+        btcRelevance: 8,
+        catalystSummary: "Macro is hostile to risk assets.",
+        riskFlags: ["FOMC meeting"],
+        rawPrompt: "",
+        rawResponse: "",
+      },
+      decision: {
+        action: "block",
+        confidence: 9,
+        reason: "Macro is hostile to risk assets.",
+        reasonCodes: ["EVENT_WINDOW_WATCH_ONLY", "MACRO_BLOCKED"],
+      },
+    });
+
+    const records = await generateFullChainBacktestSignals({
+      symbol: "BTCUSDT",
+      candles4h,
+      candles1h,
+      candles1d,
+      fundingRates: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        fundingRate: i < 50 ? 0.004 : 0.012,
+      })),
+      openInterest: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        openInterest: 100000 + i * 4000,
+      })),
+      spotPrice: candles4h[candles4h.length - 1].close,
+      news: [
+        {
+          id: "n1",
+          source: "Reuters",
+          publishedAt: new Date(baseTs + 55 * 4 * 60 * 60 * 1000).toISOString(),
+          title: "Fed warns inflation may stay elevated",
+          category: "macro",
+        },
+      ],
+      config: {
+        ...strategyConfig,
+        minStructureScore: 40,
+        minimumRiskReward: 1.5,
+        minRegimeConfidence: 40,
+        minParticipantConfidence: 40,
+      },
+      llmCall: async () =>
+        JSON.stringify({
+          macroBias: "bearish",
+          confidenceScore: 9,
+          btcRelevance: 8,
+          catalystSummary: "Macro is hostile to risk assets.",
+          riskFlags: ["FOMC meeting"],
+        }),
+      minHistory: 40,
+    });
+
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.some((record) => record.alertStatus === "blocked_by_macro")).toBe(true);
+    expect(records.every((record) => record.regime === "trend" || record.regime === "range")).toBe(true);
+
+    structureSpy.mockRestore();
+    consensusSpy.mockRestore();
+    macroSpy.mockRestore();
+  });
+
+  it("会把 openLongCount 传进共识层以重放相关暴露门控", async () => {
+    const baseTs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const candles4h: Candle[] = Array.from({ length: 55 }, (_, i) => ({
+      timestamp: baseTs + i * 4 * 60 * 60 * 1000,
+      open: 60000 + i * 20,
+      high: 60600 + i * 20,
+      low: 59600 + i * 20,
+      close: 60300 + i * 20,
+      volume: 1000 + i * 5,
+    }));
+    const candles1h: Candle[] = Array.from({ length: 220 }, (_, i) => ({
+      timestamp: baseTs + i * 60 * 60 * 1000,
+      open: 60000 + i * 5,
+      high: 60200 + i * 5,
+      low: 59800 + i * 5,
+      close: 60100 + i * 5,
+      volume: 300,
+    }));
+    const candles1d: Candle[] = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: baseTs + i * 24 * 60 * 60 * 1000,
+      open: 56000 + i * 100,
+      high: 56800 + i * 100,
+      low: 55200 + i * 100,
+      close: 56500 + i * 100,
+      volume: 8000,
+    }));
+
+    const observedOpenLongCounts: number[] = [];
+
+    const structureSpy = vi.spyOn(structureModule, "analyzeStructuralSetups").mockImplementation((slice4h) => {
+      if (slice4h.length === 53) {
+        return {
+          setups: [
+            {
+              timeframe: "4h",
+              direction: "long",
+              entryLow: 62300,
+              entryHigh: 62500,
+              stopLossHint: 59000,
+              takeProfitHint: 70000,
+              structureScore: 74,
+              structureReason: "First long",
+              invalidationReason: "1h close below 61800",
+              confluenceFactors: ["fvg", "liquidity-sweep"],
+              confirmationStatus: "confirmed",
+              confirmationTimeframe: "1h",
+              reasonCodes: [],
+            },
+          ],
+        };
+      }
+      if (slice4h.length === 54) {
+        return {
+          setups: [
+            {
+              timeframe: "4h",
+              direction: "long",
+              entryLow: 62800,
+              entryHigh: 63000,
+              stopLossHint: 59500,
+              takeProfitHint: 70500,
+              structureScore: 76,
+              structureReason: "Second long",
+              invalidationReason: "1h close below 62200",
+              confluenceFactors: ["fvg", "liquidity-sweep"],
+              confirmationStatus: "confirmed",
+              confirmationTimeframe: "1h",
+              reasonCodes: [],
+            },
+          ],
+        };
+      }
+      return { setups: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+    });
+    const consensusSpy = vi.spyOn(consensusModule, "analyzeConsensus").mockImplementation((input) => {
+      observedOpenLongCounts.push(input.openLongCount ?? 0);
+      if (input.setups.length === 0) {
+        return { candidates: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+      }
+      const [setup] = input.setups;
+      return {
+        candidates: [
+          {
+            symbol: "BTCUSDT",
+            direction: setup.direction,
+            timeframe: setup.timeframe,
+            entryLow: setup.entryLow,
+            entryHigh: setup.entryHigh,
+            stopLoss: setup.stopLossHint,
+            takeProfit: setup.takeProfitHint,
+            riskReward: 2,
+            regimeAligned: true,
+            participantAligned: true,
+            structureReason: setup.structureReason,
+            contextReason: "trend",
+            signalGrade: "high-conviction",
+            reasonCodes: [],
+          },
+        ],
+      };
+    });
+    const macroSpy = vi.spyOn(macroModule, "assessMacroOverlay").mockResolvedValue({
+      assessment: {
+        macroBias: "bullish",
+        confidenceScore: 7,
+        btcRelevance: 7,
+        catalystSummary: "Macro neutral-positive.",
+        riskFlags: [],
+        rawPrompt: "",
+        rawResponse: "",
+      },
+      decision: {
+        action: "pass",
+        confidence: 7,
+        reason: "Macro allows the setup.",
+        reasonCodes: [],
+      },
+    });
+
+    await generateFullChainBacktestSignals({
+      symbol: "BTCUSDT",
+      candles4h,
+      candles1h,
+      candles1d,
+      fundingRates: candles4h.map((candle) => ({
+        timestamp: candle.timestamp,
+        fundingRate: 0.004,
+      })),
+      openInterest: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        openInterest: 100000 + i * 3000,
+      })),
+      spotPrices: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        price: candle.close + i,
+      })),
+      news: [],
+      config: {
+        ...strategyConfig,
+        minStructureScore: 40,
+        minimumRiskReward: 1.5,
+        minRegimeConfidence: 40,
+        minParticipantConfidence: 40,
+      },
+      llmCall: async () => "{}",
+      minHistory: 52,
+    });
+
+    expect(observedOpenLongCounts).toContain(0);
+    expect(observedOpenLongCounts).toContain(1);
+
+    structureSpy.mockRestore();
+    consensusSpy.mockRestore();
+    macroSpy.mockRestore();
+  });
+
+  it("会按历史时间点传入对应的现货价格，而不是复用单一 spotPrice", async () => {
+    const baseTs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const candles4h: Candle[] = Array.from({ length: 55 }, (_, i) => ({
+      timestamp: baseTs + i * 4 * 60 * 60 * 1000,
+      open: 60000 + i * 20,
+      high: 60600 + i * 20,
+      low: 59600 + i * 20,
+      close: 60300 + i * 20,
+      volume: 1000 + i * 5,
+    }));
+    const candles1h: Candle[] = Array.from({ length: 220 }, (_, i) => ({
+      timestamp: baseTs + i * 60 * 60 * 1000,
+      open: 60000 + i * 5,
+      high: 60200 + i * 5,
+      low: 59800 + i * 5,
+      close: 60100 + i * 5,
+      volume: 300,
+    }));
+    const candles1d: Candle[] = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: baseTs + i * 24 * 60 * 60 * 1000,
+      open: 56000 + i * 100,
+      high: 56800 + i * 100,
+      low: 55200 + i * 100,
+      close: 56500 + i * 100,
+      volume: 8000,
+    }));
+    const observedRegimeSpotPrices: number[] = [];
+    const observedParticipantSpotPrices: number[] = [];
+
+    const structureSpy = vi.spyOn(structureModule, "analyzeStructuralSetups").mockReturnValue({
+      setups: [],
+      skipReasonCode: "STRUCTURE_NO_SETUP",
+    });
+    const regimeSpy = vi.spyOn(regimeModule, "detectMarketRegime").mockImplementation((candles, config, inputs) => {
+      observedRegimeSpotPrices.push(inputs?.spotPrice ?? 0);
+      return {
+        regime: "trend",
+        confidence: 80,
+        driverType: "new-longs",
+        driverConfidence: 75,
+        driverReasons: ["test"],
+        reasons: ["test"],
+        reasonCodes: [],
+      };
+    });
+    const participantSpy = vi.spyOn(participantModule, "assessParticipantPressure").mockImplementation(
+      (_candles, _fundingRates, _openInterest, spotPrice) => {
+        observedParticipantSpotPrices.push(spotPrice);
+        return {
+          bias: "balanced",
+          pressureType: "none",
+          confidence: 70,
+          rationale: "test",
+          spotPerpBasis: 0,
+          basisDivergence: false,
+          reasonCodes: [],
+        };
+      }
+    );
+
+    await generateFullChainBacktestSignals({
+      symbol: "BTCUSDT",
+      candles4h,
+      candles1h,
+      candles1d,
+      fundingRates: candles4h.map((candle) => ({
+        timestamp: candle.timestamp,
+        fundingRate: 0.004,
+      })),
+      openInterest: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        openInterest: 100000 + i * 3000,
+      })),
+      spotPrice: 999999,
+      spotPrices: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        price: 58000 + i * 10,
+      })),
+      news: [],
+      config: {
+        ...strategyConfig,
+        minRegimeConfidence: 40,
+      },
+      llmCall: async () => "{}",
+      minHistory: 52,
+    });
+
+    expect(observedRegimeSpotPrices[0]).toBe(58000 + 52 * 10);
+    expect(observedRegimeSpotPrices[1]).toBe(58000 + 53 * 10);
+    expect(new Set(observedParticipantSpotPrices).size).toBeGreaterThan(1);
+    expect(observedParticipantSpotPrices).not.toContain(999999);
+
+    structureSpy.mockRestore();
+    regimeSpy.mockRestore();
+    participantSpy.mockRestore();
+  });
+
+  it("macro block 的样本不会阻止后续同价位重试", async () => {
+    const baseTs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const candles4h: Candle[] = Array.from({ length: 55 }, (_, i) => ({
+      timestamp: baseTs + i * 4 * 60 * 60 * 1000,
+      open: 60000 + i * 20,
+      high: 60600 + i * 20,
+      low: 59600 + i * 20,
+      close: 60300 + i * 20,
+      volume: 1000 + i * 5,
+    }));
+    const candles1h: Candle[] = Array.from({ length: 220 }, (_, i) => ({
+      timestamp: baseTs + i * 60 * 60 * 1000,
+      open: 60000 + i * 5,
+      high: 60200 + i * 5,
+      low: 59800 + i * 5,
+      close: 60100 + i * 5,
+      volume: 300,
+    }));
+    const candles1d: Candle[] = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: baseTs + i * 24 * 60 * 60 * 1000,
+      open: 56000 + i * 100,
+      high: 56800 + i * 100,
+      low: 55200 + i * 100,
+      close: 56500 + i * 100,
+      volume: 8000,
+    }));
+
+    const structureSpy = vi.spyOn(structureModule, "analyzeStructuralSetups").mockImplementation((slice4h) => {
+      if (slice4h.length === 53 || slice4h.length === 54) {
+        return {
+          setups: [
+            {
+              timeframe: "4h",
+              direction: "long",
+              entryLow: 62450,
+              entryHigh: 62600,
+              stopLossHint: 61800,
+              takeProfitHint: 64000,
+              structureScore: 72,
+              structureReason: "Retest long",
+              invalidationReason: "1h close below 61800",
+              confluenceFactors: ["fvg", "liquidity-sweep"],
+              confirmationStatus: "confirmed",
+              confirmationTimeframe: "1h",
+              reasonCodes: [],
+            },
+          ],
+        };
+      }
+      return { setups: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+    });
+    const consensusSpy = vi.spyOn(consensusModule, "analyzeConsensus").mockImplementation((input) => {
+      if (input.setups.length === 0) {
+        return { candidates: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+      }
+      return {
+        candidates: [
+          {
+            symbol: "BTCUSDT",
+            direction: "long",
+            timeframe: "4h",
+            entryLow: 62450,
+            entryHigh: 62600,
+            stopLoss: 61800,
+            takeProfit: 64000,
+            riskReward: 2,
+            regimeAligned: true,
+            participantAligned: true,
+            structureReason: "Retest long",
+            contextReason: "trend",
+            signalGrade: "high-conviction",
+            reasonCodes: [],
+          },
+        ],
+      };
+    });
+    const macroSpy = vi
+      .spyOn(macroModule, "assessMacroOverlay")
+      .mockResolvedValueOnce({
+        assessment: {
+          macroBias: "bearish",
+          confidenceScore: 9,
+          btcRelevance: 8,
+          catalystSummary: "Hostile macro",
+          riskFlags: ["event"],
+          rawPrompt: "",
+          rawResponse: "",
+        },
+        decision: {
+          action: "block",
+          confidence: 9,
+          reason: "Hostile macro",
+          reasonCodes: ["EVENT_WINDOW_WATCH_ONLY", "MACRO_BLOCKED"],
+        },
+      })
+      .mockResolvedValue({
+        assessment: {
+          macroBias: "bullish",
+          confidenceScore: 7,
+          btcRelevance: 7,
+          catalystSummary: "Macro clears",
+          riskFlags: [],
+          rawPrompt: "",
+          rawResponse: "",
+        },
+        decision: {
+          action: "pass",
+          confidence: 7,
+          reason: "Macro clears",
+          reasonCodes: [],
+        },
+      });
+
+    const records = await generateFullChainBacktestSignals({
+      symbol: "BTCUSDT",
+      candles4h,
+      candles1h,
+      candles1d,
+      fundingRates: candles4h.map((candle) => ({
+        timestamp: candle.timestamp,
+        fundingRate: 0.004,
+      })),
+      openInterest: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        openInterest: 100000 + i * 3000,
+      })),
+      spotPrices: candles4h.map((candle) => ({
+        timestamp: candle.timestamp,
+        price: candle.close,
+      })),
+      news: [],
+      config: {
+        ...strategyConfig,
+        minStructureScore: 40,
+        minimumRiskReward: 1.5,
+        minRegimeConfidence: 40,
+        minParticipantConfidence: 40,
+      },
+      llmCall: async () => "{}",
+      minHistory: 52,
+    });
+
+    expect(records).toHaveLength(2);
+    expect(records[0].alertStatus).toBe("blocked_by_macro");
+    expect(records[1].alertStatus).toBe("sent");
+
+    structureSpy.mockRestore();
+    consensusSpy.mockRestore();
+    macroSpy.mockRestore();
+  });
+
+  it("已发送过的同价位重评估会保留 duplicate 记录", async () => {
+    const baseTs = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const candles4h: Candle[] = Array.from({ length: 55 }, (_, i) => ({
+      timestamp: baseTs + i * 4 * 60 * 60 * 1000,
+      open: 60000 + i * 20,
+      high: 60600 + i * 20,
+      low: 59600 + i * 20,
+      close: 60300 + i * 20,
+      volume: 1000 + i * 5,
+    }));
+    const candles1h: Candle[] = Array.from({ length: 220 }, (_, i) => ({
+      timestamp: baseTs + i * 60 * 60 * 1000,
+      open: 60000 + i * 5,
+      high: 60200 + i * 5,
+      low: 59800 + i * 5,
+      close: 60100 + i * 5,
+      volume: 300,
+    }));
+    const candles1d: Candle[] = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: baseTs + i * 24 * 60 * 60 * 1000,
+      open: 56000 + i * 100,
+      high: 56800 + i * 100,
+      low: 55200 + i * 100,
+      close: 56500 + i * 100,
+      volume: 8000,
+    }));
+
+    const structureSpy = vi.spyOn(structureModule, "analyzeStructuralSetups").mockImplementation((slice4h) => {
+      if (slice4h.length === 53 || slice4h.length === 54) {
+        return {
+          setups: [
+            {
+              timeframe: "4h",
+              direction: "long",
+              entryLow: 62450,
+              entryHigh: 62600,
+              stopLossHint: 61800,
+              takeProfitHint: 64000,
+              structureScore: 72,
+              structureReason: "Retest long",
+              invalidationReason: "1h close below 61800",
+              confluenceFactors: ["fvg", "liquidity-sweep"],
+              confirmationStatus: "confirmed",
+              confirmationTimeframe: "1h",
+              reasonCodes: [],
+            },
+          ],
+        };
+      }
+      return { setups: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+    });
+    const consensusSpy = vi.spyOn(consensusModule, "analyzeConsensus").mockImplementation((input) => {
+      if (input.setups.length === 0) {
+        return { candidates: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+      }
+      return {
+        candidates: [
+          {
+            symbol: "BTCUSDT",
+            direction: "long",
+            timeframe: "4h",
+            entryLow: 62450,
+            entryHigh: 62600,
+            stopLoss: 61800,
+            takeProfit: 64000,
+            riskReward: 2,
+            regimeAligned: true,
+            participantAligned: true,
+            structureReason: "Retest long",
+            contextReason: "trend",
+            signalGrade: "high-conviction",
+            reasonCodes: [],
+          },
+        ],
+      };
+    });
+    const macroSpy = vi.spyOn(macroModule, "assessMacroOverlay").mockResolvedValue({
+      assessment: {
+        macroBias: "bullish",
+        confidenceScore: 7,
+        btcRelevance: 7,
+        catalystSummary: "Macro clears",
+        riskFlags: [],
+        rawPrompt: "",
+        rawResponse: "",
+      },
+      decision: {
+        action: "pass",
+        confidence: 7,
+        reason: "Macro clears",
+        reasonCodes: [],
+      },
+    });
+
+    const records = await generateFullChainBacktestSignals({
+      symbol: "BTCUSDT",
+      candles4h,
+      candles1h,
+      candles1d,
+      fundingRates: candles4h.map((candle) => ({
+        timestamp: candle.timestamp,
+        fundingRate: 0.004,
+      })),
+      openInterest: candles4h.map((candle, i) => ({
+        timestamp: candle.timestamp,
+        openInterest: 100000 + i * 3000,
+      })),
+      spotPrices: candles4h.map((candle) => ({
+        timestamp: candle.timestamp,
+        price: candle.close,
+      })),
+      news: [],
+      config: {
+        ...strategyConfig,
+        minStructureScore: 40,
+        minimumRiskReward: 1.5,
+        minRegimeConfidence: 40,
+        minParticipantConfidence: 40,
+      },
+      llmCall: async () => "{}",
+      minHistory: 52,
+    });
+
+    expect(records).toHaveLength(2);
+    expect(records[0].alertStatus).toBe("sent");
+    expect(records[1].alertStatus).toBe("skipped_duplicate");
+    expect(records[1].executionReasonCode).toBe("already_sent");
+
+    structureSpy.mockRestore();
+    consensusSpy.mockRestore();
+    macroSpy.mockRestore();
   });
 });
 

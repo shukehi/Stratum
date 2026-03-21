@@ -51,6 +51,15 @@ export function initDb(db: Database.Database): void {
       macro_reason     TEXT,
       reason_codes     TEXT    NOT NULL,
       alert_status     TEXT    NOT NULL DEFAULT 'pending',
+      recommended_position_size REAL,
+      recommended_base_size REAL,
+      risk_amount      REAL,
+      account_risk_percent REAL,
+      same_direction_exposure_count INTEGER,
+      same_direction_exposure_risk_percent REAL,
+      projected_same_direction_risk_percent REAL,
+      portfolio_open_risk_percent REAL,
+      projected_portfolio_risk_percent REAL,
       created_at       INTEGER NOT NULL,
       updated_at       INTEGER NOT NULL
     );
@@ -75,7 +84,104 @@ export function initDb(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_candles_lookup
       ON candles (symbol, timeframe, timestamp DESC);
+
+    CREATE TABLE IF NOT EXISTS candidate_snapshots (
+      id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id              TEXT    NOT NULL,
+      base_candidate_id         TEXT    NOT NULL,
+      symbol                    TEXT    NOT NULL,
+      direction                 TEXT    NOT NULL,
+      timeframe                 TEXT    NOT NULL,
+      entry_low                 REAL    NOT NULL,
+      entry_high                REAL    NOT NULL,
+      stop_loss                 REAL    NOT NULL,
+      take_profit               REAL    NOT NULL,
+      risk_reward               REAL    NOT NULL,
+      signal_grade              TEXT    NOT NULL,
+      regime_aligned            INTEGER NOT NULL,
+      participant_aligned       INTEGER NOT NULL,
+      structure_reason          TEXT    NOT NULL,
+      context_reason            TEXT    NOT NULL,
+      macro_reason              TEXT,
+      reason_codes              TEXT    NOT NULL,
+      alert_status              TEXT    NOT NULL DEFAULT 'pending',
+      macro_action              TEXT,
+      confirmation_status       TEXT,
+      recommended_position_size REAL,
+      recommended_base_size     REAL,
+      risk_amount               REAL,
+      account_risk_percent      REAL,
+      same_direction_exposure_count INTEGER,
+      same_direction_exposure_risk_percent REAL,
+      projected_same_direction_risk_percent REAL,
+      portfolio_open_risk_percent REAL,
+      projected_portfolio_risk_percent REAL,
+      daily_bias                TEXT,
+      order_flow_bias           TEXT,
+      regime                    TEXT,
+      regime_confidence         REAL,
+      market_driver_type        TEXT,
+      participant_bias          TEXT,
+      participant_pressure_type TEXT,
+      participant_confidence    REAL,
+      basis_divergence          INTEGER NOT NULL DEFAULT 0,
+      liquidity_session         TEXT,
+      execution_outcome         TEXT,
+      execution_reason_code     TEXT,
+      created_at                INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_candidate_snapshots_symbol
+      ON candidate_snapshots(symbol, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_candidate_snapshots_macro_action
+      ON candidate_snapshots(macro_action, created_at DESC);
   `);
+
+  ensureColumn(db, "scan_logs", "skip_stage", "TEXT");
+  ensureColumn(db, "scan_logs", "skip_reason_code", "TEXT");
+  ensureColumn(db, "scan_logs", "regime", "TEXT");
+  ensureColumn(db, "scan_logs", "participant_pressure_type", "TEXT");
+  ensureColumn(db, "scan_logs", "daily_bias", "TEXT");
+  ensureColumn(db, "scan_logs", "order_flow_bias", "TEXT");
+  ensureColumn(db, "scan_logs", "basis_divergence", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "scan_logs", "market_driver_type", "TEXT");
+  ensureColumn(db, "scan_logs", "liquidity_session", "TEXT");
+
+  ensureColumn(db, "candidates", "macro_action", "TEXT");
+  ensureColumn(db, "candidates", "confirmation_status", "TEXT");
+  ensureColumn(db, "candidates", "daily_bias", "TEXT");
+  ensureColumn(db, "candidates", "order_flow_bias", "TEXT");
+  ensureColumn(db, "candidates", "regime", "TEXT");
+  ensureColumn(db, "candidates", "regime_confidence", "REAL");
+  ensureColumn(db, "candidates", "market_driver_type", "TEXT");
+  ensureColumn(db, "candidates", "participant_bias", "TEXT");
+  ensureColumn(db, "candidates", "participant_pressure_type", "TEXT");
+  ensureColumn(db, "candidates", "participant_confidence", "REAL");
+  ensureColumn(db, "candidates", "basis_divergence", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(db, "candidates", "liquidity_session", "TEXT");
+  ensureColumn(db, "candidates", "recommended_position_size", "REAL");
+  ensureColumn(db, "candidates", "recommended_base_size", "REAL");
+  ensureColumn(db, "candidates", "risk_amount", "REAL");
+  ensureColumn(db, "candidates", "account_risk_percent", "REAL");
+  ensureColumn(db, "candidates", "same_direction_exposure_count", "INTEGER");
+  ensureColumn(db, "candidates", "same_direction_exposure_risk_percent", "REAL");
+  ensureColumn(db, "candidates", "projected_same_direction_risk_percent", "REAL");
+  ensureColumn(db, "candidates", "portfolio_open_risk_percent", "REAL");
+  ensureColumn(db, "candidates", "projected_portfolio_risk_percent", "REAL");
+  ensureColumn(db, "candidate_snapshots", "base_candidate_id", "TEXT");
+  ensureColumn(db, "candidate_snapshots", "recommended_position_size", "REAL");
+  ensureColumn(db, "candidate_snapshots", "recommended_base_size", "REAL");
+  ensureColumn(db, "candidate_snapshots", "risk_amount", "REAL");
+  ensureColumn(db, "candidate_snapshots", "account_risk_percent", "REAL");
+  ensureColumn(db, "candidate_snapshots", "same_direction_exposure_count", "INTEGER");
+  ensureColumn(db, "candidate_snapshots", "same_direction_exposure_risk_percent", "REAL");
+  ensureColumn(db, "candidate_snapshots", "projected_same_direction_risk_percent", "REAL");
+  ensureColumn(db, "candidate_snapshots", "portfolio_open_risk_percent", "REAL");
+  ensureColumn(db, "candidate_snapshots", "projected_portfolio_risk_percent", "REAL");
+  ensureColumn(db, "candidate_snapshots", "liquidity_session", "TEXT");
+  ensureColumn(db, "candidate_snapshots", "execution_outcome", "TEXT");
+  ensureColumn(db, "candidate_snapshots", "execution_reason_code", "TEXT");
 }
 
 /**
@@ -89,4 +195,15 @@ export function openDb(path: string): Database.Database {
   initDb(db);
   initPositionsDb(db);
   return db;
+}
+
+function ensureColumn(
+  db: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }

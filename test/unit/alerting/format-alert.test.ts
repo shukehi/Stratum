@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { formatAlert } from "../../../src/services/alerting/format-alert.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 import type { MarketContext } from "../../../src/domain/market/market-context.js";
+import type { PositionSizingSummary } from "../../../src/domain/signal/position-sizing.js";
 
 // ── テスト夹具 ────────────────────────────────────────────────────────────────
 
@@ -43,37 +44,55 @@ function makeCtx(overrides: Partial<MarketContext> = {}): MarketContext {
   };
 }
 
+function makePositionSizing(
+  overrides: Partial<PositionSizingSummary> = {}
+): PositionSizingSummary {
+  return {
+    status: "available",
+    recommendedPositionSize: 50_000,
+    recommendedBaseSize: 0.834,
+    riskAmount: 1_000,
+    accountRiskPercent: 0.01,
+    sameDirectionExposureCount: 1,
+    sameDirectionExposureRiskPercent: 0.01,
+    projectedSameDirectionRiskPercent: 0.02,
+    portfolioOpenRiskPercent: 0.02,
+    projectedPortfolioRiskPercent: 0.03,
+    ...overrides,
+  };
+}
+
 // ── 方向・等級 ────────────────────────────────────────────────────────────────
 
 describe("formatAlert — 方向と等級", () => {
-  it("long → 🟢 と LONG が含まれる", () => {
+  it("long → 🟢 与中文多头标签", () => {
     const msg = formatAlert(makeCandidate({ direction: "long" }), makeCtx());
     expect(msg).toContain("🟢");
-    expect(msg).toContain("LONG");
+    expect(msg).toContain("多头");
   });
 
-  it("short → 🔴 と SHORT が含まれる", () => {
+  it("short → 🔴 与中文空头标签", () => {
     const msg = formatAlert(makeCandidate({ direction: "short" }), makeCtx());
     expect(msg).toContain("🔴");
-    expect(msg).toContain("SHORT");
+    expect(msg).toContain("空头");
   });
 
-  it("high-conviction → 🔥 が含まれる", () => {
+  it("high-conviction → 🔥 与中文高信念标签", () => {
     const msg = formatAlert(makeCandidate({ signalGrade: "high-conviction" }), makeCtx());
     expect(msg).toContain("🔥");
-    expect(msg).toContain("HIGH CONVICTION");
+    expect(msg).toContain("高信念");
   });
 
-  it("standard → 📊 が含まれる", () => {
+  it("standard → 📊 与中文标准标签", () => {
     const msg = formatAlert(makeCandidate({ signalGrade: "standard" }), makeCtx());
     expect(msg).toContain("📊");
-    expect(msg).toContain("STANDARD");
+    expect(msg).toContain("标准");
   });
 
-  it("watch → 👀 が含まれる", () => {
+  it("watch → 👀 与中文观察标签", () => {
     const msg = formatAlert(makeCandidate({ signalGrade: "watch" }), makeCtx());
     expect(msg).toContain("👀");
-    expect(msg).toContain("WATCH");
+    expect(msg).toContain("观察");
   });
 });
 
@@ -124,9 +143,21 @@ describe("formatAlert — alignment フラグ", () => {
     expect(msg).toContain("✗");
   });
 
-  it("regime が含まれる", () => {
+  it("regime 会显示为中文标签", () => {
     const msg = formatAlert(makeCandidate(), makeCtx({ regime: "range" }));
-    expect(msg).toContain("range");
+    expect(msg).toContain("市场状态");
+    expect(msg).toContain("震荡");
+  });
+
+  it("participant pressure type 与 session 会显示为中文", () => {
+    const msg = formatAlert(
+      makeCandidate(),
+      makeCtx({ participantPressureType: "squeeze-risk", liquiditySession: "london_ny_overlap" })
+    );
+    expect(msg).toContain("压力类型");
+    expect(msg).toContain("逼空风险");
+    expect(msg).toContain("交易时段");
+    expect(msg).toContain("伦敦纽约重叠");
   });
 });
 
@@ -142,20 +173,81 @@ describe("formatAlert — structureReason / contextReason", () => {
     const msg = formatAlert(makeCandidate({ contextReason: "London breakout" }), makeCtx());
     expect(msg).toContain("London breakout");
   });
+
+  it("英文 context summary 会被压缩成更易读的中文摘要", () => {
+    const msg = formatAlert(
+      makeCandidate({
+        contextReason:
+          "Regime: range (80%) | Driver: short-covering (58%) | Participants: short-crowded / squeeze-risk (55%) | Session: london_ny_overlap",
+      }),
+      makeCtx()
+    );
+    expect(msg).toContain("状态：震荡");
+    expect(msg).toContain("驱动：空头回补");
+    expect(msg).toContain("参与者：空头拥挤 / 逼空风险");
+    expect(msg).toContain("时段：伦敦纽约重叠");
+  });
+
+  it("confirmation / daily bias / order flow 会从 reasonCodes 推断并展示", () => {
+    const msg = formatAlert(
+      makeCandidate({
+        reasonCodes: [
+          "STRUCTURE_CONFIRMATION_PENDING",
+          "DAILY_TREND_COUNTER",
+          "ORDER_FLOW_ALIGNED",
+        ],
+      }),
+      makeCtx()
+    );
+    expect(msg).toContain("确认状态");
+    expect(msg).toContain("待确认");
+    expect(msg).toContain("日线偏向");
+    expect(msg).toContain("看空");
+    expect(msg).toContain("订单流");
+    expect(msg).toContain("看多");
+  });
 });
 
 // ── macroReason ───────────────────────────────────────────────────────────────
 
 describe("formatAlert — macroReason", () => {
-  it("macroReason が指定された場合は Macro 行が含まれる", () => {
+  it("macroReason 指定时会显示中文宏观行", () => {
     const msg = formatAlert(makeCandidate({ macroReason: "Fed pivot supports BTC." }), makeCtx());
-    expect(msg).toContain("Macro");
+    expect(msg).toContain("宏观");
     expect(msg).toContain("Fed pivot supports BTC.");
   });
 
   it("macroReason=undefined → Macro 行が省略される", () => {
     const msg = formatAlert(makeCandidate({ macroReason: undefined }), makeCtx());
     expect(msg).not.toContain("Macro");
+  });
+});
+
+describe("formatAlert — position sizing", () => {
+  it("可计算时会展示中文风险、仓位和组合暴露", () => {
+    const msg = formatAlert(makeCandidate(), makeCtx(), makePositionSizing());
+    expect(msg).toContain("单笔风险");
+    expect(msg).toContain("$1,000");
+    expect(msg).toContain("建议仓位");
+    expect(msg).toContain("$50,000");
+    expect(msg).toContain("同向暴露");
+    expect(msg).toContain("1.0 % -> 2.0 %");
+    expect(msg).toContain("组合风险");
+  });
+
+  it("不可计算时会明确说明中文不可计算原因", () => {
+    const msg = formatAlert(
+      makeCandidate(),
+      makeCtx(),
+      makePositionSizing({
+        status: "unavailable",
+        reason: "account_size_missing",
+        recommendedPositionSize: undefined,
+        recommendedBaseSize: undefined,
+        riskAmount: undefined,
+      })
+    );
+    expect(msg).toContain("无法计算（缺少账户规模）");
   });
 });
 

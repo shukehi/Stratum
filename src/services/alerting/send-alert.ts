@@ -1,4 +1,5 @@
 import type { AlertPayload } from "../../domain/signal/alert-payload.js";
+import type { PositionSizingSummary } from "../../domain/signal/position-sizing.js";
 import { formatAlert } from "./format-alert.js";
 
 /**
@@ -24,17 +25,25 @@ export type TelegramConfig = {
 };
 
 export type HttpFetchFn = typeof fetch;
+export type SendAlertOptions = {
+  positionSizing?: PositionSizingSummary;
+};
 
 const TELEGRAM_API = "https://api.telegram.org";
 
 export async function sendAlert(
   payload: AlertPayload,
   config: TelegramConfig,
-  httpFetch: HttpFetchFn = fetch
+  httpFetch: HttpFetchFn = fetch,
+  options: SendAlertOptions = {}
 ): Promise<boolean> {
   if (!config.botToken || !config.chatId) return false;
 
-  const text = formatAlert(payload.candidate, payload.marketContext);
+  const text = formatAlert(
+    payload.candidate,
+    payload.marketContext,
+    options.positionSizing
+  );
   const url = `${TELEGRAM_API}/bot${config.botToken}/sendMessage`;
 
   try {

@@ -29,11 +29,28 @@ type PositionRow = {
   take_profit: number;
   risk_reward: number;
   signal_grade: string;
+  recommended_position_size: number | null;
+  recommended_base_size: number | null;
+  risk_amount: number | null;
+  account_risk_percent: number | null;
   status: string;
   opened_at: number;
   closed_at: number | null;
   close_price: number | null;
   pnl_r: number | null;
+};
+
+export type PositionRiskMeta = {
+  recommendedPositionSize?: number;
+  recommendedBaseSize?: number;
+  riskAmount?: number;
+  accountRiskPercent?: number;
+};
+
+export type OpenRiskSummary = {
+  openCount: number;
+  openRiskAmount: number;
+  openRiskPercent: number;
 };
 
 // ── 主キー生成 ────────────────────────────────────────────────────────────
@@ -52,7 +69,8 @@ export function buildPositionId(
 export function openPosition(
   db: Database.Database,
   candidate: TradeCandidate,
-  openedAt: number = Date.now()
+  openedAt: number = Date.now(),
+  riskMeta: PositionRiskMeta = {}
 ): void {
   const id = buildPositionId(
     candidate.symbol,
@@ -65,8 +83,9 @@ export function openPosition(
     INSERT OR IGNORE INTO positions (
       id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
-      signal_grade, status, opened_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+      signal_grade, recommended_position_size, recommended_base_size,
+      risk_amount, account_risk_percent, status, opened_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
   `).run(
     id,
     candidate.symbol,
@@ -78,6 +97,10 @@ export function openPosition(
     candidate.takeProfit,
     candidate.riskReward,
     candidate.signalGrade,
+    riskMeta.recommendedPositionSize ?? null,
+    riskMeta.recommendedBaseSize ?? null,
+    riskMeta.riskAmount ?? null,
+    riskMeta.accountRiskPercent ?? null,
     openedAt
   );
 }
@@ -142,6 +165,35 @@ export function countOpenByDirection(
     )
     .get(direction) as { n: number };
   return row.n;
+}
+
+export function getOpenRiskSummary(
+  db: Database.Database,
+  direction?: "long" | "short"
+): OpenRiskSummary {
+  const baseSql = `
+    SELECT
+      COUNT(*) as open_count,
+      COALESCE(SUM(COALESCE(risk_amount, 0)), 0) as open_risk_amount,
+      COALESCE(SUM(account_risk_percent), 0) as open_risk_percent
+    FROM positions
+    WHERE status = 'open'
+  `;
+  const row = direction
+    ? db.prepare(`${baseSql} AND direction = ?`).get(direction)
+    : db.prepare(baseSql).get();
+
+  const typedRow = row as {
+    open_count: number;
+    open_risk_amount: number;
+    open_risk_percent: number;
+  };
+
+  return {
+    openCount: typedRow.open_count,
+    openRiskAmount: typedRow.open_risk_amount,
+    openRiskPercent: typedRow.open_risk_percent,
+  };
 }
 
 export function findPosition(

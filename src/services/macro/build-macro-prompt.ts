@@ -1,4 +1,5 @@
 import type { NewsItem } from "../../domain/news/news-item.js";
+import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { StrategyConfig } from "../../app/config.js";
 
 /**
@@ -16,7 +17,11 @@ import type { StrategyConfig } from "../../app/config.js";
  *   - 访问网络
  *   - 返回 MacroAssessment（职责在 parse-macro-response）
  */
-export function buildMacroPrompt(items: NewsItem[], config: StrategyConfig): string {
+export function buildMacroPrompt(
+  items: NewsItem[],
+  candidate: TradeCandidate,
+  config: StrategyConfig
+): string {
   const capped = items.slice(0, config.maxNewsItemsForPrompt);
 
   const newsBlock =
@@ -29,9 +34,22 @@ export function buildMacroPrompt(items: NewsItem[], config: StrategyConfig): str
           .join("\n")
       : "(no recent news headlines available)";
 
-  return `You are a senior macro analyst assessing the current market environment for Bitcoin (BTC) swing trading decisions.
+  const contextSummary = sanitizeContextReason(candidate.contextReason);
+  const structureSummary = sanitizeStructureReason(candidate.structureReason);
+  const regimeAlignment = candidate.regimeAligned ? "supportive" : "not supportive";
+  const participantAlignment = candidate.participantAligned ? "supportive" : "not supportive";
 
-Review the following recent news headlines and provide a structured assessment:
+  return `You are a senior macro analyst assessing whether recent headlines strengthen or weaken a specific Bitcoin (BTC) swing trading candidate.
+
+Candidate summary:
+- Direction: ${candidate.direction}
+- Signal grade: ${candidate.signalGrade}
+- Structure thesis: ${structureSummary}
+- Context reason: ${contextSummary}
+- Regime alignment: ${regimeAlignment}
+- Participant flow alignment: ${participantAlignment}
+
+Review the following recent news headlines and decide whether they support or undermine this specific candidate:
 
 ${newsBlock}
 
@@ -51,6 +69,24 @@ Scoring guide:
 
 Important:
 - If news is ambiguous, mixed, or unrelated to BTC/crypto/macro, return "neutral" with low scores.
-- Be conservative: avoid "high-conviction" bearish calls unless evidence is clear.
+- Do not re-evaluate price levels, entry zones, stop-loss levels, or internal model scores.
+- Treat the candidate thesis as given and only judge whether macro context supports or weakens this candidate.
+- Be conservative: avoid strong directional calls unless the headlines clearly support them.
 - Do NOT include any text outside the JSON object.`;
+}
+
+function sanitizeContextReason(contextReason: string): string {
+  return contextReason
+    .replace(/\(\d+%?\)/g, "")
+    .replace(/\b\d+(?:\.\d+)?\b/g, "")
+    .replace(/\s+\|\s+/g, " | ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function sanitizeStructureReason(structureReason: string): string {
+  return structureReason
+    .replace(/\b\d+(?:\.\d+)?\b/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }

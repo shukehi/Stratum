@@ -22,6 +22,10 @@ export function initPositionsDb(db: Database.Database): void {
       take_profit    REAL    NOT NULL,
       risk_reward    REAL    NOT NULL,
       signal_grade   TEXT    NOT NULL,
+      recommended_position_size REAL,
+      recommended_base_size REAL,
+      risk_amount    REAL,
+      account_risk_percent REAL,
       status         TEXT    NOT NULL DEFAULT 'open',
       opened_at      INTEGER NOT NULL,
       closed_at      INTEGER,
@@ -38,4 +42,20 @@ export function initPositionsDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_positions_direction
       ON positions(direction, status);
   `);
+
+  ensureColumn(db, "positions", "recommended_position_size", "REAL");
+  ensureColumn(db, "positions", "recommended_base_size", "REAL");
+  ensureColumn(db, "positions", "risk_amount", "REAL");
+  ensureColumn(db, "positions", "account_risk_percent", "REAL");
+}
+
+function ensureColumn(
+  db: Database.Database,
+  tableName: string,
+  columnName: string,
+  definition: string
+): void {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  if (columns.some((column) => column.name === columnName)) return;
+  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }

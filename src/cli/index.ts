@@ -7,6 +7,8 @@
  *   pnpm report --direction            按多/空方向分析
  *   pnpm report --structure            按结构类型（FVG/流动性扫描）分析
  *   pnpm report --macro                宏观过滤效果分析
+ *   pnpm report --funnel               执行漏斗与交叉分桶
+ *   pnpm report --risk                 仓位建议与组合风险
  *   pnpm report --logs [N]             最近 N 次扫描日志（默认 20）
  *   pnpm report --all                  显示全部分析
  *
@@ -71,6 +73,8 @@ function printHelp(): void {
   console.log(`    ${cyan("pnpm report --direction")}      按方向（多头 vs 空头）`);
   console.log(`    ${cyan("pnpm report --structure")}      按结构类型（FVG / 流动性扫描）`);
   console.log(`    ${cyan("pnpm report --macro")}          宏观过滤效果（block / downgrade / pass）`);
+  console.log(`    ${cyan("pnpm report --funnel")}         执行漏斗（blocked / skipped / sent / opened）`);
+  console.log(`    ${cyan("pnpm report --risk")}           仓位建议覆盖率与组合风险`);
   console.log(`    ${cyan("pnpm report --logs")}           最近 20 次扫描日志`);
   console.log(`    ${cyan("pnpm report --logs 50")}        最近 50 次扫描日志`);
   console.log(`    ${cyan("pnpm report --all")}            显示全部分析`);

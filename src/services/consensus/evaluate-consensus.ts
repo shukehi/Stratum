@@ -7,6 +7,7 @@ import type { StrategyConfig } from "../../app/config.js";
 import type { DailyBias } from "../../domain/market/daily-bias.js";
 import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import { computeRiskReward } from "../risk/compute-risk-reward.js";
+import { evaluateExposureGate } from "../risk/evaluate-exposure-gate.js";
 
 /**
  * 共识引擎入参  (PHASE_06)
@@ -23,6 +24,9 @@ export type ConsensusInput = {
   baselineAtr?: number;
   openLongCount?: number;
   openShortCount?: number;
+  openLongRiskPercent?: number;
+  openShortRiskPercent?: number;
+  portfolioOpenRiskPercent?: number;
   /** 日线趋势偏向（PHASE_16）— 未传入时跳过日线过滤 */
   dailyBias?: DailyBias;
   /** CVD 订单流偏向（PHASE_18）— 未传入时跳过订单流过滤 */
@@ -74,25 +78,44 @@ export type ConsensusInput = {
  *   - 不接数据库
  */
 export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
+  return analyzeConsensus(input).candidates;
+}
+
+export function analyzeConsensus(
+  input: ConsensusInput
+): { candidates: TradeCandidate[]; skipReasonCode?: ReasonCode } {
   const { symbol, setups, ctx, config } = input;
   const baselineAtr = input.baselineAtr;
   const openLongCount = input.openLongCount ?? 0;
   const openShortCount = input.openShortCount ?? 0;
+  const openLongRiskPercent = input.openLongRiskPercent ?? 0;
+  const openShortRiskPercent = input.openShortRiskPercent ?? 0;
+  const portfolioOpenRiskPercent = input.portfolioOpenRiskPercent ?? 0;
 
   const inVacuum = ctx.reasonCodes.includes("DELEVERAGING_VACUUM");
   const regimeAligned = isRegimeAligned(ctx.regime, config);
 
   const candidates: TradeCandidate[] = [];
+  const rejectedReasons: ReasonCode[] = [];
 
   for (const setup of setups) {
     // ── 门槛 1: 结构已失效 ───────────────────────────────────────────────────
-    if (setup.confirmationStatus === "invalidated") continue;
+    if (setup.confirmationStatus === "invalidated") {
+      rejectedReasons.push("STRUCTURE_CONFIRMATION_INVALIDATED");
+      continue;
+    }
 
     // ── 门槛 2: 去杠杆真空期 ─────────────────────────────────────────────────
-    if (inVacuum) continue;
+    if (inVacuum) {
+      rejectedReasons.push("DELEVERAGING_VACUUM");
+      continue;
+    }
 
     // ── 门槛 3: 结构分数不足 ─────────────────────────────────────────────────
-    if (setup.structureScore < config.minStructureScore) continue;
+    if (setup.structureScore < config.minStructureScore) {
+      rejectedReasons.push("STRUCTURE_SCORE_TOO_LOW");
+      continue;
+    }
 
     // ── 门槛 4: 弱参与者 + 低结构分（高结构分可覆盖弱参与者信号）───────────────
     const weakParticipant =
@@ -101,12 +124,14 @@ export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
       weakParticipant &&
       setup.structureScore < config.minStructureScoreForWeakParticipantOverride
     ) {
+      rejectedReasons.push("PARTICIPANT_CONFIDENCE_TOO_LOW");
       continue;
     }
 
     // ── 门槛 5: 风险回报比不足 ───────────────────────────────────────────────
     const rr = computeRiskReward(setup);
     if (rr < config.minimumRiskReward) {
+      rejectedReasons.push("RISK_REWARD_TOO_LOW");
       continue;
     }
 
@@ -117,6 +142,7 @@ export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
           ? setup.entryHigh - setup.stopLossHint
           : setup.stopLossHint - setup.entryLow;
       if (stopDistance > config.maxStopDistanceAtr * baselineAtr) {
+        rejectedReasons.push("STOP_DISTANCE_TOO_WIDE");
         continue;
       }
     }
@@ -126,12 +152,28 @@ export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
       setup.direction === "long" &&
       openLongCount >= config.maxCorrelatedSignalsPerDirection
     ) {
+      rejectedReasons.push("CORRELATED_EXPOSURE_LIMIT");
       continue;
     }
+
     if (
       setup.direction === "short" &&
       openShortCount >= config.maxCorrelatedSignalsPerDirection
     ) {
+      rejectedReasons.push("CORRELATED_EXPOSURE_LIMIT");
+      continue;
+    }
+
+    const exposureGate = evaluateExposureGate({
+      sameDirectionExposureCount:
+        setup.direction === "long" ? openLongCount : openShortCount,
+      sameDirectionOpenRiskPercent:
+        setup.direction === "long" ? openLongRiskPercent : openShortRiskPercent,
+      portfolioOpenRiskPercent,
+      config,
+    });
+    if (!exposureGate.allowed) {
+      rejectedReasons.push(exposureGate.reasonCode);
       continue;
     }
 
@@ -218,7 +260,13 @@ export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
     });
   }
 
-  return candidates;
+  return {
+    candidates,
+    skipReasonCode:
+      candidates.length === 0
+        ? mostCommonReason(rejectedReasons)
+        : undefined,
+  };
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────
@@ -269,4 +317,22 @@ function downgradeGrade(grade: SignalGrade): SignalGrade {
   if (grade === "high-conviction") return "standard";
   if (grade === "standard") return "watch";
   return "watch";
+}
+
+function mostCommonReason(reasons: ReasonCode[]): ReasonCode | undefined {
+  if (reasons.length === 0) return undefined;
+  const counts = new Map<ReasonCode, number>();
+  for (const reason of reasons) {
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+
+  let bestReason = reasons[0];
+  let bestCount = counts.get(bestReason) ?? 0;
+  for (const [reason, count] of counts) {
+    if (count > bestCount) {
+      bestReason = reason;
+      bestCount = count;
+    }
+  }
+  return bestReason;
 }

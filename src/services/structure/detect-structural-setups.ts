@@ -1,5 +1,6 @@
 import type { Candle } from "../../domain/market/candle.js";
 import type { MarketContext } from "../../domain/market/market-context.js";
+import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { StructuralSetup } from "../../domain/signal/structural-setup.js";
 import type { StrategyConfig } from "../../app/config.js";
 import { detectFvg } from "./detect-fvg.js";
@@ -43,11 +44,31 @@ export function detectStructuralSetups(
    */
   precomputedEqualLevels?: EqualLevel[],
 ): StructuralSetup[] {
+  return analyzeStructuralSetups(
+    candles4h,
+    candles1h,
+    ctx,
+    config,
+    precomputedEqualLevels
+  ).setups;
+}
+
+export function analyzeStructuralSetups(
+  candles4h: Candle[],
+  candles1h: Candle[],
+  ctx: MarketContext,
+  config: StrategyConfig,
+  precomputedEqualLevels?: EqualLevel[],
+): { setups: StructuralSetup[]; skipReasonCode?: ReasonCode } {
   // ── 1. 真空期：去杠杆真空期内跳过所有结构信号 ───────────────────────────
-  if (ctx.reasonCodes.includes("DELEVERAGING_VACUUM")) return [];
+  if (ctx.reasonCodes.includes("DELEVERAGING_VACUUM")) {
+    return { setups: [], skipReasonCode: "DELEVERAGING_VACUUM" };
+  }
 
   // ── 2. 低状态置信度：regimeConfidence 不足时结构信号不可信 ───────────────
-  if (ctx.regimeConfidence < config.minRegimeConfidence) return [];
+  if (ctx.regimeConfidence < config.minRegimeConfidence) {
+    return { setups: [], skipReasonCode: "REGIME_LOW_CONFIDENCE" };
+  }
 
   // ── 3. 检测 FVG（仅 4h，与 sweep 完全独立） ────────────────────────────
   const fvgSetups = detectFvg(candles4h, "4h", config);
@@ -57,6 +78,9 @@ export function detectStructuralSetups(
 
   // ── 5. 合并并应用复合结构加分 ─────────────────────────────────────────────
   const combined = [...fvgSetups, ...sweepSetups];
+  if (combined.length === 0) {
+    return { setups: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+  }
   const withConfluence = applyConfluence(combined, config);
 
   // ── 5b. PHASE_19: 等高等低（Equal Highs/Lows）加成 ─────────────────────
@@ -93,9 +117,19 @@ export function detectStructuralSetups(
   );
 
   // ── 8. 过滤：已失效 setup 丢弃；分数低于阈值亦丢弃 ─────────────────────────
-  return withConfirmation
+  const surviving = withConfirmation
     .filter(s => s.confirmationStatus !== "invalidated")
     .filter(s => s.structureScore >= config.minStructureScore);
+
+  if (surviving.length > 0) {
+    return { setups: surviving };
+  }
+
+  if (withConfirmation.some((setup) => setup.confirmationStatus === "invalidated")) {
+    return { setups: [], skipReasonCode: "STRUCTURE_CONFIRMATION_INVALIDATED" };
+  }
+
+  return { setups: [], skipReasonCode: "STRUCTURE_SCORE_TOO_LOW" };
 }
 
 // ── 等高等低加成（导出供单元测试使用）─────────────────────────────────────────

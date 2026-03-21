@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { assessMacroOverlay } from "../../../src/services/macro/assess-macro-overlay.js";
 import type { LlmCallFn } from "../../../src/services/macro/assess-macro-overlay.js";
 import type { NewsItem } from "../../../src/domain/news/news-item.js";
+import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 import { strategyConfig } from "../../../src/app/config.js";
 
 // ── 测试夹具 ──────────────────────────────────────────────────────────────────
@@ -68,19 +69,40 @@ function lowRelevanceResponse() {
   };
 }
 
+function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate {
+  return {
+    symbol: "BTCUSDT",
+    direction: "long",
+    timeframe: "4h",
+    entryLow: 59800,
+    entryHigh: 60000,
+    stopLoss: 58800,
+    takeProfit: 63000,
+    riskReward: 2.5,
+    regimeAligned: true,
+    participantAligned: true,
+    structureReason: "Bullish FVG reclaim",
+    contextReason: "Regime: trend (75%) | Driver: new-longs (82%) | Participants: short-crowded / squeeze-risk (70%) | Session: london_ny_overlap",
+    signalGrade: "high-conviction",
+    reasonCodes: [],
+    ...overrides,
+  };
+}
+
 // ── MacroAssessment 透传 ───────────────────────────────────────────────────────
 
 describe("assessMacroOverlay — assessment 透传", () => {
   it("assessment 包含 LLM 返回的原始 macroBias", async () => {
-    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(bullishResponse()));
+    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm(bullishResponse()));
     expect(assessment.macroBias).toBe("bullish");
     expect(assessment.confidenceScore).toBe(8);
   });
 
   it("assessment 包含 rawPrompt（非空字符串）", async () => {
-    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(bullishResponse()));
+    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm(bullishResponse()));
     expect(assessment.rawPrompt.length).toBeGreaterThan(0);
     expect(assessment.rawPrompt).toContain("Fed signals rate cuts");
+    expect(assessment.rawPrompt).toContain("Direction: long");
   });
 });
 
@@ -88,12 +110,12 @@ describe("assessMacroOverlay — assessment 透传", () => {
 
 describe("assessMacroOverlay — 低置信度 → pass", () => {
   it("confidenceScore < minimumMacroConfidence(7) → action=pass", async () => {
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(lowConfidenceResponse()));
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm(lowConfidenceResponse()));
     expect(decision.action).toBe("pass");
   });
 
   it("低置信度时 reasonCodes 为空", async () => {
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(lowConfidenceResponse()));
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm(lowConfidenceResponse()));
     expect(decision.reasonCodes).toHaveLength(0);
   });
 });
@@ -102,7 +124,7 @@ describe("assessMacroOverlay — 低置信度 → pass", () => {
 
 describe("assessMacroOverlay — 低 BTC 相关性 → pass", () => {
   it("btcRelevance < minimumBtcRelevance(6) → action=pass", async () => {
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(lowRelevanceResponse()));
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm(lowRelevanceResponse()));
     expect(decision.action).toBe("pass");
   });
 });
@@ -111,19 +133,31 @@ describe("assessMacroOverlay — 低 BTC 相关性 → pass", () => {
 
 describe("assessMacroOverlay — macroBias=bullish → pass", () => {
   it("看多高置信度 → action=pass", async () => {
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(bullishResponse()));
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate({ direction: "long" }), strategyConfig, makeLlm(bullishResponse()));
     expect(decision.action).toBe("pass");
   });
 
-  it("看多 + riskFlags 非空 → action=pass，但包含 EVENT_WINDOW_WATCH_ONLY", async () => {
+  it("看多 + riskFlags 非空 → aligned long 被降级为 watch-only", async () => {
     const response = { ...bullishResponse(), riskFlags: ["FOMC meeting"] };
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm(response));
-    expect(decision.action).toBe("pass");
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate({ direction: "long" }), strategyConfig, makeLlm(response));
+    expect(decision.action).toBe("downgrade");
     expect(decision.reasonCodes).toContain("EVENT_WINDOW_WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("MACRO_DOWNGRADED");
   });
 
-  it("中性 → action=pass", async () => {
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, makeLlm({
+  it("bullish 宏观不会自动 block short watch 候选", async () => {
+    const { decision } = await assessMacroOverlay(
+      SAMPLE_NEWS,
+      makeCandidate({ direction: "short", signalGrade: "watch" }),
+      strategyConfig,
+      makeLlm({ ...bullishResponse(), riskFlags: ["ETF decision"] })
+    );
+    expect(decision.action).toBe("downgrade");
+    expect(decision.reasonCodes).not.toContain("MACRO_BLOCKED");
+  });
+
+  it("中性 + 无事件风险 → action=pass", async () => {
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm({
       macroBias: "neutral", confidenceScore: 8, btcRelevance: 7,
       catalystSummary: "Mixed signals.", riskFlags: [],
     }));
@@ -131,47 +165,51 @@ describe("assessMacroOverlay — macroBias=bullish → pass", () => {
   });
 });
 
-// ── 决策规则 d: 看空 + riskFlags → block ─────────────────────────────────────
+// ── candidate-aware: 同一批新闻下，long / short 可以有不同结果 ─────────────────
 
-describe("assessMacroOverlay — 看空 + riskFlags → block", () => {
-  it("bearish + riskFlags=[\"FOMC\"] → action=block", async () => {
+describe("assessMacroOverlay — candidate-aware 决策", () => {
+  it("bearish + riskFlags 对 long 候选 → block", async () => {
     const { decision } = await assessMacroOverlay(
-      SAMPLE_NEWS, strategyConfig, makeLlm(bearishResponse(["FOMC meeting"]))
+      SAMPLE_NEWS,
+      makeCandidate({ direction: "long", signalGrade: "high-conviction" }),
+      strategyConfig,
+      makeLlm(bearishResponse(["FOMC meeting"]))
     );
     expect(decision.action).toBe("block");
   });
 
-  it("block 时 reasonCodes 包含 EVENT_WINDOW_WATCH_ONLY 和 MACRO_BLOCKED", async () => {
+  it("bearish + riskFlags 对 short 候选 → downgrade，不会误杀顺风空头", async () => {
     const { decision } = await assessMacroOverlay(
-      SAMPLE_NEWS, strategyConfig, makeLlm(bearishResponse(["regulatory action"]))
-    );
-    expect(decision.reasonCodes).toContain("EVENT_WINDOW_WATCH_ONLY");
-    expect(decision.reasonCodes).toContain("MACRO_BLOCKED");
-  });
-});
-
-// ── 决策规则 e: 看空 + 无 riskFlags → downgrade ──────────────────────────────
-
-describe("assessMacroOverlay — 看空 + 无 riskFlags → downgrade", () => {
-  it("bearish + riskFlags=[] → action=downgrade", async () => {
-    const { decision } = await assessMacroOverlay(
-      SAMPLE_NEWS, strategyConfig, makeLlm(bearishResponse([]))
+      SAMPLE_NEWS,
+      makeCandidate({ direction: "short", signalGrade: "high-conviction" }),
+      strategyConfig,
+      makeLlm(bearishResponse(["regulatory action"]))
     );
     expect(decision.action).toBe("downgrade");
+    expect(decision.reasonCodes).toContain("EVENT_WINDOW_WATCH_ONLY");
+    expect(decision.reasonCodes).toContain("MACRO_DOWNGRADED");
+    expect(decision.reasonCodes).not.toContain("MACRO_BLOCKED");
   });
 
-  it("downgrade 时 reasonCodes 包含 MACRO_DOWNGRADED", async () => {
+  it("bearish + 无 riskFlags 对 long 候选 → downgrade", async () => {
     const { decision } = await assessMacroOverlay(
-      SAMPLE_NEWS, strategyConfig, makeLlm(bearishResponse([]))
+      SAMPLE_NEWS,
+      makeCandidate({ direction: "long" }),
+      strategyConfig,
+      makeLlm(bearishResponse([]))
     );
+    expect(decision.action).toBe("downgrade");
     expect(decision.reasonCodes).toContain("MACRO_DOWNGRADED");
   });
 
-  it("downgrade 时不包含 EVENT_WINDOW_WATCH_ONLY（无风险旗帜）", async () => {
+  it("bearish + 无 riskFlags 对 short 候选 → pass", async () => {
     const { decision } = await assessMacroOverlay(
-      SAMPLE_NEWS, strategyConfig, makeLlm(bearishResponse([]))
+      SAMPLE_NEWS,
+      makeCandidate({ direction: "short" }),
+      strategyConfig,
+      makeLlm(bearishResponse([]))
     );
-    expect(decision.reasonCodes).not.toContain("EVENT_WINDOW_WATCH_ONLY");
+    expect(decision.action).toBe("pass");
   });
 });
 
@@ -180,20 +218,20 @@ describe("assessMacroOverlay — 看空 + 无 riskFlags → downgrade", () => {
 describe("assessMacroOverlay — LLM 调用抛出异常", () => {
   it("llmCall 抛出 Error → action=pass（不崩溃）", async () => {
     const throwingLlm: LlmCallFn = async () => { throw new Error("Network timeout"); };
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, throwingLlm);
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, throwingLlm);
     expect(decision.action).toBe("pass");
   });
 
   it("llmCall 抛出时 assessment.confidenceScore=0（中性）", async () => {
     const throwingLlm: LlmCallFn = async () => { throw new Error("API error"); };
-    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, throwingLlm);
+    const { assessment } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, throwingLlm);
     expect(assessment.confidenceScore).toBe(0);
     expect(assessment.macroBias).toBe("neutral");
   });
 
   it("llmCall 抛出时 reasonCodes 为空", async () => {
     const throwingLlm: LlmCallFn = async () => { throw new Error("Timeout"); };
-    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, throwingLlm);
+    const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, throwingLlm);
     expect(decision.reasonCodes).toHaveLength(0);
   });
 });
@@ -203,7 +241,7 @@ describe("assessMacroOverlay — LLM 调用抛出异常", () => {
 describe("assessMacroOverlay — LLM 响应解析失败", () => {
   it("LLM 返回无效 JSON → assessment 中性，decision=pass", async () => {
     const badLlm: LlmCallFn = async () => "I cannot provide an assessment.";
-    const { assessment, decision } = await assessMacroOverlay(SAMPLE_NEWS, strategyConfig, badLlm);
+    const { assessment, decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, badLlm);
     expect(assessment.macroBias).toBe("neutral");
     expect(assessment.confidenceScore).toBe(0);
     expect(decision.action).toBe("pass"); // confidenceScore=0 < 7 → pass
@@ -214,7 +252,7 @@ describe("assessMacroOverlay — LLM 响应解析失败", () => {
 
 describe("assessMacroOverlay — 空新闻列表", () => {
   it("空新闻 + bullish LLM → 正常返回 pass", async () => {
-    const { decision } = await assessMacroOverlay([], strategyConfig, makeLlm(bullishResponse()));
+    const { decision } = await assessMacroOverlay([], makeCandidate(), strategyConfig, makeLlm(bullishResponse()));
     expect(decision.action).toBe("pass");
   });
 });

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { evaluateConsensus } from "../../../src/services/consensus/evaluate-consensus.js";
+import {
+  evaluateConsensus,
+  analyzeConsensus,
+} from "../../../src/services/consensus/evaluate-consensus.js";
 import type { ConsensusInput } from "../../../src/services/consensus/evaluate-consensus.js";
 import type { StructuralSetup } from "../../../src/domain/signal/structural-setup.js";
 import type { MarketContext } from "../../../src/domain/market/market-context.js";
@@ -245,6 +248,44 @@ describe("evaluateConsensus — 门槛: 相关性暴露", () => {
       openShortCount: 2,
     };
     expect(evaluateConsensus(input)).toHaveLength(0);
+  });
+
+  it("同一批 2 个 long setup 不会在共识阶段预占未来执行暴露", () => {
+    const input: ConsensusInput = {
+      symbol: "BTCUSDT",
+      setups: [
+        makePassingLongSetup(),
+        makePassingLongSetup({
+          entryLow: 60100,
+          entryHigh: 60300,
+          takeProfitHint: 64600,
+        }),
+      ],
+      ctx: makeBullishCtx(),
+      config: strategyConfig,
+      openLongCount: 1,
+    };
+    expect(evaluateConsensus(input)).toHaveLength(2);
+  });
+});
+
+describe("evaluateConsensus — 门槛: 风险预算暴露", () => {
+  it("同向开放风险达到上限时拒绝新信号", () => {
+    const input = makeInput({
+      openLongRiskPercent: strategyConfig.maxSameDirectionOpenRiskPercent,
+    });
+    const result = analyzeConsensus(input);
+    expect(result.candidates).toHaveLength(0);
+    expect(result.skipReasonCode).toBe("SAME_DIRECTION_RISK_LIMIT");
+  });
+
+  it("组合开放风险达到上限时拒绝新信号", () => {
+    const input = makeInput({
+      portfolioOpenRiskPercent: strategyConfig.maxPortfolioOpenRiskPercent,
+    });
+    const result = analyzeConsensus(input);
+    expect(result.candidates).toHaveLength(0);
+    expect(result.skipReasonCode).toBe("PORTFOLIO_RISK_LIMIT");
   });
 });
 

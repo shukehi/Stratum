@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initDb } from "../../../src/services/persistence/init-db.js";
-import { saveCandidate, updateAlertStatus, buildId } from "../../../src/services/persistence/save-candidate.js";
+import {
+  saveCandidate,
+  saveCandidateSnapshot,
+  loadCandidateSnapshots,
+  countCandidateSnapshotsByStatus,
+  updateCandidateSnapshotOutcome,
+  updateAlertStatus,
+  buildId,
+} from "../../../src/services/persistence/save-candidate.js";
 import { loadRecentCandidates, findCandidate } from "../../../src/services/persistence/load-candidates.js";
 import type { AlertPayload } from "../../../src/domain/signal/alert-payload.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
@@ -137,6 +145,124 @@ describe("saveCandidate — 基本保存", () => {
     const row = db.prepare("SELECT macro_reason FROM candidates").get() as { macro_reason: string | null };
     expect(row.macro_reason).toBe("Fed pivot");
   });
+
+  it("持久化元数据会写入 candidates", () => {
+    saveCandidate(db, makePayload(), {
+      macroAction: "downgrade",
+      confirmationStatus: "pending",
+      dailyBias: "bullish",
+      orderFlowBias: "bearish",
+      positionSizing: {
+        status: "available",
+        recommendedPositionSize: 50_000,
+        recommendedBaseSize: 0.834,
+        riskAmount: 1_000,
+        accountRiskPercent: 0.01,
+        sameDirectionExposureCount: 1,
+        sameDirectionExposureRiskPercent: 0.01,
+        projectedSameDirectionRiskPercent: 0.02,
+        portfolioOpenRiskPercent: 0.02,
+        projectedPortfolioRiskPercent: 0.03,
+      },
+    });
+    const row = db.prepare(`
+      SELECT macro_action, confirmation_status, daily_bias, order_flow_bias, regime, participant_pressure_type,
+             liquidity_session, recommended_position_size, risk_amount, account_risk_percent, same_direction_exposure_count
+      FROM candidates
+    `).get() as {
+      macro_action: string;
+      confirmation_status: string;
+      daily_bias: string;
+      order_flow_bias: string;
+      regime: string;
+      participant_pressure_type: string;
+      liquidity_session: string;
+      recommended_position_size: number;
+      risk_amount: number;
+      account_risk_percent: number;
+      same_direction_exposure_count: number;
+    };
+    expect(row.macro_action).toBe("downgrade");
+    expect(row.confirmation_status).toBe("pending");
+    expect(row.daily_bias).toBe("bullish");
+    expect(row.order_flow_bias).toBe("bearish");
+    expect(row.regime).toBe("trend");
+    expect(row.participant_pressure_type).toBe("none");
+    expect(row.liquidity_session).toBe("london_ramp");
+    expect(row.recommended_position_size).toBe(50_000);
+    expect(row.risk_amount).toBe(1_000);
+    expect(row.account_risk_percent).toBeCloseTo(0.01, 5);
+    expect(row.same_direction_exposure_count).toBe(1);
+  });
+});
+
+describe("candidate_snapshots", () => {
+  it("blocked_by_macro 样本会被保留", () => {
+    saveCandidateSnapshot(
+      db,
+      { ...makePayload(), alertStatus: "blocked_by_macro" },
+      { macroAction: "block", confirmationStatus: "confirmed" }
+    );
+    expect(countCandidateSnapshotsByStatus(db, "blocked_by_macro")).toBe(1);
+  });
+
+  it("snapshot 可按最新顺序读取", () => {
+    const now = Date.now();
+    saveCandidateSnapshot(db, { ...makePayload({ symbol: "BTCUSDT" }), createdAt: now - 2000 });
+    saveCandidateSnapshot(db, { ...makePayload({ symbol: "ETHUSDT" }), createdAt: now - 1000 });
+    const rows = loadCandidateSnapshots(db, 10);
+    expect(rows[0].symbol).toBe("ETHUSDT");
+    expect(rows[1].symbol).toBe("BTCUSDT");
+  });
+
+  it("重复评估同一价格位会生成不同 candidateId，并保留同一 baseCandidateId", () => {
+    const createdAtA = Date.now() - 2000;
+    const createdAtB = Date.now() - 1000;
+    saveCandidateSnapshot(db, { ...makePayload(), createdAt: createdAtA });
+    saveCandidateSnapshot(db, { ...makePayload(), createdAt: createdAtB });
+
+    const rows = loadCandidateSnapshots(db, 10);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].candidateId).not.toBe(rows[1].candidateId);
+    expect(rows[0].baseCandidateId).toBe(rows[1].baseCandidateId);
+  });
+
+  it("snapshot 会记录最终执行结果", () => {
+    const createdAt = Date.now();
+    const candidateId = saveCandidateSnapshot(
+      db,
+      { ...makePayload(), createdAt },
+      { executionOutcome: "pending" }
+    );
+
+    updateCandidateSnapshotOutcome(db, candidateId, "sent", {
+      alertStatus: "sent",
+    });
+
+    const row = loadCandidateSnapshots(db, 1)[0];
+    expect(row.alertStatus).toBe("sent");
+    expect(row.executionOutcome).toBe("sent");
+    expect(row.executionReasonCode).toBeNull();
+  });
+
+  it("snapshot 跳过结果会同步更新 alertStatus", () => {
+    const createdAt = Date.now();
+    const candidateId = saveCandidateSnapshot(
+      db,
+      { ...makePayload(), createdAt },
+      { executionOutcome: "pending" }
+    );
+
+    updateCandidateSnapshotOutcome(db, candidateId, "skipped_duplicate", {
+      executionReasonCode: "already_sent",
+    });
+
+    const row = loadCandidateSnapshots(db, 1)[0];
+    expect(row.alertStatus).toBe("skipped_duplicate");
+    expect(row.executionOutcome).toBe("skipped_duplicate");
+    expect(row.executionReasonCode).toBe("already_sent");
+    expect(countCandidateSnapshotsByStatus(db, "skipped_duplicate")).toBe(1);
+  });
 });
 
 describe("saveCandidate — 重複上書き（INSERT OR REPLACE）", () => {
@@ -231,6 +357,12 @@ describe("loadRecentCandidates", () => {
     saveCandidate(db, { ...makePayload({ symbol: "ETHUSDT" }), createdAt: now - 1000 });
     const results = loadRecentCandidates(db, 24);
     expect(results[0].candidate.symbol).toBe("ETHUSDT"); // 新しい方が先
+  });
+
+  it("liquiditySession が復元される", () => {
+    saveCandidate(db, makePayload());
+    const results = loadRecentCandidates(db, 24);
+    expect(results[0].marketContext.liquiditySession).toBe("london_ramp");
   });
 });
 

@@ -6,6 +6,7 @@ import {
   closePosition,
   getOpenPositions,
   countOpenByDirection,
+  getOpenRiskSummary,
   findPosition,
   buildPositionId,
 } from "../../../src/services/positions/track-position.js";
@@ -124,6 +125,28 @@ describe("openPosition — 基本開仓", () => {
       .prepare("SELECT opened_at FROM positions")
       .get() as { opened_at: number };
     expect(row.opened_at).toBe(ts);
+  });
+
+  it("风险元数据会写入 positions", () => {
+    openPosition(db, makeCandidate(), Date.now(), {
+      recommendedPositionSize: 50_000,
+      recommendedBaseSize: 0.834,
+      riskAmount: 1_000,
+      accountRiskPercent: 0.01,
+    });
+    const row = db.prepare(`
+      SELECT recommended_position_size, recommended_base_size, risk_amount, account_risk_percent
+      FROM positions
+    `).get() as {
+      recommended_position_size: number;
+      recommended_base_size: number;
+      risk_amount: number;
+      account_risk_percent: number;
+    };
+    expect(row.recommended_position_size).toBe(50_000);
+    expect(row.recommended_base_size).toBeCloseTo(0.834, 3);
+    expect(row.risk_amount).toBe(1_000);
+    expect(row.account_risk_percent).toBeCloseTo(0.01, 5);
   });
 });
 
@@ -273,6 +296,35 @@ describe("countOpenByDirection", () => {
     openPosition(db, makeCandidate());
     closePosition(db, "BTCUSDT", "long", "4h", 60000, 63000, "closed_tp");
     expect(countOpenByDirection(db, "long")).toBe(0);
+  });
+});
+
+describe("getOpenRiskSummary", () => {
+  it("会汇总 open 仓位的风险金额与风险百分比", () => {
+    openPosition(db, makeCandidate(), Date.now(), {
+      riskAmount: 1_000,
+      accountRiskPercent: 0.01,
+    });
+    openPosition(
+      db,
+      makeCandidate({ symbol: "ETHUSDT", entryHigh: 3100 }),
+      Date.now(),
+      {
+        riskAmount: 1_500,
+        accountRiskPercent: 0.015,
+      }
+    );
+    const summary = getOpenRiskSummary(db);
+    expect(summary.openCount).toBe(2);
+    expect(summary.openRiskAmount).toBe(2_500);
+    expect(summary.openRiskPercent).toBeCloseTo(0.025, 5);
+  });
+
+  it("缺失风险百分比时不会用当前配置回填旧仓位风险", () => {
+    openPosition(db, makeCandidate());
+    const summary = getOpenRiskSummary(db, "long");
+    expect(summary.openCount).toBe(1);
+    expect(summary.openRiskPercent).toBe(0);
   });
 });
 

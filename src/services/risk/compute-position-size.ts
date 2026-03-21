@@ -1,4 +1,6 @@
 import type { StrategyConfig } from "../../app/config.js";
+import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
+import type { PositionSizingSummary } from "../../domain/signal/position-sizing.js";
 
 /**
  * 仓位大小计算  (PHASE_06)
@@ -30,4 +32,70 @@ export function computePositionSize(
   if (stopDistance <= 0) return 0;
   const riskAmount = accountSize * config.riskPerTrade;
   return (riskAmount * entryPrice) / stopDistance;
+}
+
+export type BuildPositionSizingInput = {
+  candidate: TradeCandidate;
+  config: StrategyConfig;
+  sameDirectionExposureCount: number;
+  sameDirectionOpenRiskPercent: number;
+  portfolioOpenRiskPercent: number;
+};
+
+export function buildPositionSizingSummary(
+  input: BuildPositionSizingInput
+): PositionSizingSummary {
+  const {
+    candidate,
+    config,
+    sameDirectionExposureCount,
+    sameDirectionOpenRiskPercent,
+    portfolioOpenRiskPercent,
+  } = input;
+
+  const entryMid = (candidate.entryLow + candidate.entryHigh) / 2;
+  const accountRiskPercent = config.riskPerTrade;
+  const projectedSameDirectionRiskPercent =
+    sameDirectionOpenRiskPercent + accountRiskPercent;
+  const projectedPortfolioRiskPercent =
+    portfolioOpenRiskPercent + accountRiskPercent;
+
+  const riskAmount =
+    config.accountSizeUsd > 0
+      ? config.accountSizeUsd * accountRiskPercent
+      : undefined;
+  const recommendedPositionSize = computePositionSize(
+    config.accountSizeUsd,
+    entryMid,
+    candidate.stopLoss,
+    config
+  );
+  const recommendedBaseSize =
+    recommendedPositionSize > 0 && entryMid > 0
+      ? recommendedPositionSize / entryMid
+      : undefined;
+
+  const stopDistance = Math.abs(entryMid - candidate.stopLoss);
+  const unavailableReason =
+    stopDistance <= 0 || entryMid <= 0
+      ? "invalid_stop_distance"
+      : config.accountSizeUsd <= 0
+        ? "account_size_missing"
+        : undefined;
+
+  return {
+    status: unavailableReason ? "unavailable" : "available",
+    reason: unavailableReason,
+    recommendedPositionSize:
+      unavailableReason === undefined ? recommendedPositionSize : undefined,
+    recommendedBaseSize:
+      unavailableReason === undefined ? recommendedBaseSize : undefined,
+    riskAmount,
+    accountRiskPercent,
+    sameDirectionExposureCount,
+    sameDirectionExposureRiskPercent: sameDirectionOpenRiskPercent,
+    projectedSameDirectionRiskPercent,
+    portfolioOpenRiskPercent,
+    projectedPortfolioRiskPercent,
+  };
 }

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { detectMarketRegime } from "../../../src/services/regime/detect-market-regime.js";
 import { strategyConfig } from "../../../src/app/config.js";
 import type { Candle } from "../../../src/domain/market/candle.js";
+import type { FundingRatePoint } from "../../../src/domain/market/funding-rate.js";
+import type { OpenInterestPoint } from "../../../src/domain/market/open-interest.js";
 
 // ── Fixture helpers ──────────────────────────────────────────────────────────
 
@@ -131,6 +133,27 @@ function makeTrendExhaustionCandles(): Candle[] {
   return [...earlyTrend, ...frontHalf, ...backHalf];
 }
 
+function makeOI(
+  n: number,
+  start = 100_000,
+  step = 2_000
+): OpenInterestPoint[] {
+  return Array.from({ length: n }, (_, i) => ({
+    timestamp: BASE_TIME + i * INTERVAL,
+    openInterest: start + i * step,
+  }));
+}
+
+function makeFunding(
+  n: number,
+  rate: number
+): FundingRatePoint[] {
+  return Array.from({ length: n }, (_, i) => ({
+    timestamp: BASE_TIME + i * INTERVAL,
+    fundingRate: rate,
+  }));
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("detectMarketRegime", () => {
@@ -139,6 +162,7 @@ describe("detectMarketRegime", () => {
       const result = detectMarketRegime(makeTrendUpCandles(5), strategyConfig);
       expect(result.regime).toBe("range");
       expect(result.reasonCodes).toContain("REGIME_AMBIGUOUS");
+      expect(result.driverType).toBe("unclear");
       expect(result.confidence).toBeLessThan(strategyConfig.minRegimeConfidence);
     });
   });
@@ -163,6 +187,7 @@ describe("detectMarketRegime", () => {
       expect(typeof result.confidence).toBe("number");
       expect(Array.isArray(result.reasons)).toBe(true);
       expect(Array.isArray(result.reasonCodes)).toBe(true);
+      expect(typeof result.driverType).toBe("string");
       expect(result.reasons.length).toBeGreaterThan(0);
     });
   });
@@ -270,12 +295,89 @@ describe("detectMarketRegime", () => {
         const result = detectMarketRegime(candles, strategyConfig);
         expect(result).toHaveProperty("regime");
         expect(result).toHaveProperty("confidence");
+        expect(result).toHaveProperty("driverType");
         expect(result).toHaveProperty("reasons");
         expect(result).toHaveProperty("reasonCodes");
         expect(["trend", "range", "event-driven", "high-volatility"]).toContain(result.regime);
+        expect([
+          "new-longs",
+          "new-shorts",
+          "short-covering",
+          "long-liquidation",
+          "deleveraging-vacuum",
+          "unclear",
+        ]).toContain(result.driverType);
         expect(result.confidence).toBeGreaterThanOrEqual(0);
         expect(result.confidence).toBeLessThanOrEqual(100);
       }
+    });
+  });
+
+  describe("mechanism-driven classification", () => {
+    it("distinguishes short-covering from fresh long-driven trend", () => {
+      const candles = makeTrendUpCandles(30);
+      const oi = makeOI(8, 120_000, -4_000);
+      const funding = makeFunding(3, -0.0002);
+
+      const result = detectMarketRegime(candles, strategyConfig, {
+        openInterest: oi,
+        fundingRates: funding,
+        spotPrice: candles.at(-1)!.close + 250,
+      });
+
+      expect(result.driverType).toBe("short-covering");
+      expect(result.reasonCodes).toContain("REGIME_DRIVER_SHORT_COVERING");
+      expect(result.driverConfidence).toBeGreaterThan(55);
+    });
+
+    it("detects fresh short-driven downside when price falls and OI rises", () => {
+      const candles = makeTrendDownCandles(30);
+      const oi = makeOI(8, 120_000, 5_000);
+      const funding = makeFunding(3, -0.0003);
+
+      const result = detectMarketRegime(candles, strategyConfig, {
+        openInterest: oi,
+        fundingRates: funding,
+        spotPrice: candles.at(-1)!.close + 300,
+      });
+
+      expect(result.driverType).toBe("new-shorts");
+      expect(result.reasonCodes).toContain("REGIME_DRIVER_NEW_SHORTS");
+      expect(result.driverConfidence).toBeGreaterThan(70);
+    });
+
+    it("detects deleveraging vacuum when OI collapses with price", () => {
+      const candles = makeTrendDownCandles(30);
+      const oi = makeOI(8, 120_000, -15_000);
+      const funding = makeFunding(3, 0.0002);
+
+      const result = detectMarketRegime(candles, strategyConfig, {
+        openInterest: oi,
+        fundingRates: funding,
+        spotPrice: candles.at(-1)!.close - 300,
+      });
+
+      expect(result.driverType).toBe("deleveraging-vacuum");
+      expect(result.reasonCodes).toContain("DELEVERAGING_VACUUM");
+    });
+
+    it("changes mechanism output when price shape is similar but OI/funding differ", () => {
+      const candles = makeTrendUpCandles(30);
+
+      const freshLongs = detectMarketRegime(candles, strategyConfig, {
+        openInterest: makeOI(8, 100_000, 3_500),
+        fundingRates: makeFunding(3, 0.0003),
+        spotPrice: candles.at(-1)!.close - 300,
+      });
+      const shortCovering = detectMarketRegime(candles, strategyConfig, {
+        openInterest: makeOI(8, 100_000, -3_500),
+        fundingRates: makeFunding(3, -0.0003),
+        spotPrice: candles.at(-1)!.close + 300,
+      });
+
+      expect(freshLongs.driverType).toBe("new-longs");
+      expect(shortCovering.driverType).toBe("short-covering");
+      expect(freshLongs.driverType).not.toBe(shortCovering.driverType);
     });
   });
 });
