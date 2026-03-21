@@ -12,7 +12,7 @@ pnpm dev
 
 ## VPS 部署与测试
 
-> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/install-systemd-service.sh`、`deploy/stratum.service`。
+> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/update-vps.sh`、`scripts/install-systemd-service.sh`、`deploy/stratum.service`。
 
 ### 1. VPS 基础环境
 
@@ -77,6 +77,28 @@ journalctl -u stratum.service -f
 ```
 
 如需手动调整模板，可编辑 `deploy/stratum.service`。
+
+### 6. 后续更新 VPS
+
+```bash
+cd /opt/stratum
+pnpm update:vps
+```
+
+该脚本会自动完成：
+
+1. `git pull --ff-only`
+2. 安装依赖
+3. 运行 `pnpm typecheck`
+4. 运行 `pnpm test`
+5. 运行 `pnpm build`
+6. 检测到 `stratum.service` 时自动重启
+
+如果你的 systemd 单元名不是 `stratum.service`，可这样运行：
+
+```bash
+SERVICE_NAME=my-stratum.service bash ./scripts/update-vps.sh
+```
 
 ---
 
