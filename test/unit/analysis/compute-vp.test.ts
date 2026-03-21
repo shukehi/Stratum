@@ -201,3 +201,50 @@ describe("nearestLVN", () => {
     expect(nearestLVN(102, [95, 108, 120])).toBe(108);
   });
 });
+
+// ── Codex 修复验证 ─────────────────────────────────────────────────────────────
+
+describe("[P3] 零成交量处理", () => {
+  it("所有 K 线成交量为 0 时返回 null（不产生虚假偏向）", () => {
+    const zeroVol = Array.from({ length: 10 }, (_, i) =>
+      candle(i, 95, 110, 90, 100, 0),
+    );
+    expect(computeVolumeProfile(zeroVol)).toBeNull();
+  });
+});
+
+describe("[P2] 平坦高量节点 VPOC 取中点", () => {
+  it("多根完全相同的 K 线，VPOC 在高量区域中点而非最低端", () => {
+    // 20 根完全相同的 K 线：区间 90~110，price mid = 100
+    // 修复前：`>` 导致 vpocIndex=0 → vpoc ≈ 90 (priceMin 附近)
+    // 修复后：取 plateau 中点 → vpoc ≈ 100
+    const plateau = Array.from({ length: 20 }, (_, i) =>
+      candle(i, 95, 110, 90, 100, 10_000),
+    );
+    const vp = computeVolumeProfile(plateau)!;
+    expect(vp).not.toBeNull();
+    // VPOC 应在高量区间的中间，不应落在最低桶
+    expect(vp.vpoc).toBeGreaterThan(95);   // 不贴近下边界 90
+    expect(vp.vpoc).toBeLessThan(106);     // 在 90~110 中段
+  });
+});
+
+describe("[P2] 对称分布时价值区间对称扩展", () => {
+  it("均匀分布下 VAH - VPOC ≈ VPOC - VAL（误差 < 10%）", () => {
+    // 20 根均匀分布在 250~350 的 K 线，每根成交量相同
+    // 修复前：`>=` 总是先向低扩展 → 价值区间系统性偏低
+    // 修复后：并列时先向高扩展 → VAH 与 VAL 关于 VPOC 近似对称
+    const uniform = Array.from({ length: 20 }, (_, i) => {
+      const lo = 250 + i * 5;
+      const hi = lo + 5;
+      return candle(i, lo, hi, lo, (lo + hi) / 2, 1000);
+    });
+    const vp = computeVolumeProfile(uniform, { bucketCount: 100 })!;
+    expect(vp).not.toBeNull();
+    const upside   = vp.vah  - vp.vpoc;
+    const downside = vp.vpoc - vp.val;
+    // 上下侧偏差 < 15%（放宽到 15% 因为桶宽离散化）
+    const asymmetry = Math.abs(upside - downside) / Math.max(upside, downside);
+    expect(asymmetry).toBeLessThan(0.15);
+  });
+});

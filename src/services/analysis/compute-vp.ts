@@ -83,7 +83,6 @@ export function computeVolumeProfile(
   // ── 步骤 4: 构建桶结构 ──────────────────────────────────────────────────────
   const buckets: VPBucket[] = [];
   let totalVolume = 0;
-  let vpocIndex = 0;
 
   for (let b = 0; b < bucketCount; b++) {
     const priceLow  = priceMin + b * bucketSize;
@@ -96,17 +95,37 @@ export function computeVolumeProfile(
       volume,
     });
     totalVolume += volume;
-    if (volume > volumes[vpocIndex]) vpocIndex = b;
   }
+
+  // [P3] 总成交量为零时返回 null（避免在零成交量桶上产生虚假 VPOC/偏向）
+  if (totalVolume === 0) return null;
+
+  // [P2] VPOC 并列处理：找出所有最大成交量桶，取其中点（平坦高量节点取中间价格）
+  let maxVol = 0;
+  for (let b = 0; b < bucketCount; b++) {
+    if (volumes[b] > maxVol) maxVol = volumes[b];
+  }
+  let plateauLo = 0;
+  let plateauHi = 0;
+  let inPlateau = false;
+  for (let b = 0; b < bucketCount; b++) {
+    if (volumes[b] === maxVol) {
+      if (!inPlateau) { plateauLo = b; inPlateau = true; }
+      plateauHi = b;
+    }
+  }
+  const vpocIndex = Math.floor((plateauLo + plateauHi) / 2);
 
   const vpoc = buckets[vpocIndex].priceMid;
 
   // ── 步骤 5: 价值区间（Value Area）──────────────────────────────────────────
-  // 从 VPOC 向两侧扩展，每次选择体积更大的邻居桶，直到覆盖目标比例
+  // 从 VPOC 向两侧扩展，每次选择成交量更大的邻居桶，直到覆盖目标比例。
+  // [P2] 并列时交替选高/低侧，避免对称分布下价值区间系统性偏向单侧。
   const targetVolume = totalVolume * valueAreaPercent;
   let accumulated = volumes[vpocIndex];
   let loIdx = vpocIndex;
   let hiIdx = vpocIndex;
+  let tieExpandHigh = true; // 并列时的交替方向（首次向高侧）
 
   while (accumulated < targetVolume) {
     const canExpandLow  = loIdx > 0;
@@ -117,7 +136,12 @@ export function computeVolumeProfile(
     const nextLoVol = canExpandLow  ? volumes[loIdx - 1] : -1;
     const nextHiVol = canExpandHigh ? volumes[hiIdx + 1] : -1;
 
-    if (nextLoVol >= nextHiVol) {
+    const isTie = nextLoVol === nextHiVol;
+    const goLow = nextLoVol > nextHiVol || (isTie && !tieExpandHigh);
+
+    if (isTie) tieExpandHigh = !tieExpandHigh; // 下次并列时反转方向
+
+    if (goLow) {
       loIdx--;
       accumulated += volumes[loIdx];
     } else {

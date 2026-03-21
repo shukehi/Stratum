@@ -14,13 +14,9 @@
  */
 export type DailyBias = "bullish" | "bearish" | "neutral";
 
-/**
- * 价格区域（相对于 Volume Profile 价值区间）
- *   premium    — 价格高于 VAH（溢价区）
- *   equilibrium — 价格在 VAL ~ VAH 内（均衡区）
- *   discount   — 价格低于 VAL（折价区）
- */
-export type PriceZone = "premium" | "equilibrium" | "discount";
+/** 价格区域（相对于 Volume Profile 价值区间）— 定义在 volume-profile.ts，此处重导出供外部消费 */
+import type { PriceZone as _PriceZone } from "./volume-profile.js";
+export type PriceZone = _PriceZone;
 
 /** Volume Profile 日线偏向结果 */
 export type DailyBiasResult = {

@@ -26,4 +26,10 @@ describe("strategyConfig", () => {
   it("has correct calibration threshold", () => {
     expect(strategyConfig.calibrationMinSampleSize).toBe(50);
   });
+
+  it("has correct Volume Profile params (PHASE_17)", () => {
+    expect(strategyConfig.vpLookbackDays).toBe(30);
+    expect(strategyConfig.vpBucketCount).toBe(200);
+    expect(strategyConfig.vpValueAreaPercent).toBe(0.70);
+  });
 });

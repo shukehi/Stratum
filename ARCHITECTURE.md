@@ -61,7 +61,7 @@
 | OI下降 + 资金费率回归 | 去杠杆，避免追势 | ✅ DELEVERAGING_VACUUM |
 | 现货溢价 | 真实买压 vs 纯期货投机 | ✅ `analyze-participants.ts` |
 
-### Layer 2 — 价格公允区（❌ 未实现 → PHASE_17目标）
+### Layer 2 — 价格公允区（✅ 已实现 — PHASE_17）
 
 **Volume Profile**（成交量分布）是这一层的核心工具：
 
@@ -79,16 +79,18 @@ HVN（高成交量节点）= 价格在此被大量吸收 → 强支撑/阻力
 LVN（低成交量节点）= 价格在此快速穿越 → 价格真空带，预期快速移动
 ```
 
-**日线偏向判断（当前实现 vs 目标）**：
+**日线偏向判断（PHASE_17 已实现）**：
 
 ```
-当前（PHASE_16 市场结构法）：
-  摆高摆低序列 → HH/HL = bullish, LH/LL = bearish
-  优点：比EMA更接近结构  缺点：仍依赖时间框架，缺少成交量支撑
-
-目标（PHASE_17 Volume Profile法）：
+当前（PHASE_17 Volume Profile法）：
   日线VPOC + 价值区间 → 价格在VAH上方=溢价=偏空, VAL下方=折价=偏多
   优点：基于真实成交量，公允价值有机构行为支撑
+
+实现：src/services/regime/detect-daily-bias.ts
+  · 取最近 vpLookbackDays（默认30）根日线计算 Volume Profile
+  · price > VAH → bearish（溢价区）
+  · price < VAL → bullish（折价区）
+  · VAL ≤ price ≤ VAH → neutral（均衡区）
 ```
 
 ### Layer 3 — 结构设置（⚠️ 部分实现）
