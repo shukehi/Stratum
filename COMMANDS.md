@@ -10,6 +10,76 @@ pnpm dev
 
 ---
 
+## VPS 部署与测试
+
+> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/install-systemd-service.sh`、`deploy/stratum.service`。
+
+### 1. VPS 基础环境
+
+推荐 Ubuntu 22.04+，先安装 Node.js 20+ 与 pnpm：
+
+```bash
+sudo apt update
+sudo apt install -y git curl build-essential
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo corepack enable
+sudo corepack prepare pnpm@latest --activate
+```
+
+### 2. 拉代码并执行预检查
+
+```bash
+git clone <repo-url> /opt/stratum
+cd /opt/stratum
+pnpm deploy:vps
+```
+
+该脚本会自动完成：
+
+1. `.env` 不存在时从 `.env.example` 生成
+2. 创建 `DATABASE_URL` 对应目录
+3. 安装依赖
+4. 运行 `pnpm typecheck`
+5. 运行 `pnpm test`
+6. 运行 `pnpm build`
+
+### 3. 最小 `.env` 配置
+
+```env
+EXCHANGE_NAME=binance
+SYMBOL=BTC/USDT:USDT
+SPOT_SYMBOL=BTC/USDT
+DATABASE_URL=./data/stratum.db
+LOG_LEVEL=info
+```
+
+以下变量可先留空，仅在需要相关能力时再填写：
+
+- `NEWS_API_KEY`
+- `LLM_API_KEY`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+
+### 4. 手动测试
+
+```bash
+pnpm backtest --symbol BTCUSDT --limit 300
+pnpm report --all
+pnpm dev
+```
+
+### 5. 挂成 systemd 服务
+
+```bash
+sudo ./scripts/install-systemd-service.sh
+journalctl -u stratum.service -f
+```
+
+如需手动调整模板，可编辑 `deploy/stratum.service`。
+
+---
+
 ## 报告分析
 
 > 读取本地 SQLite 数据库，无需网络。需先运行 `pnpm dev` 积累数据。

@@ -9,6 +9,7 @@
     "positions": "tsx --env-file=.env src/cli/index.ts positions",
     "backtest": "tsx --env-file=.env src/cli/index.ts backtest",
     "cli": "tsx --env-file=.env src/cli/index.ts",
+    "deploy:vps": "bash ./scripts/deploy-vps.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

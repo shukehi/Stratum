@@ -1,0 +1,15 @@
+[Unit]
+Description=Stratum scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__WORKDIR__
+ExecStart=__PNPM_BIN__ dev
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
