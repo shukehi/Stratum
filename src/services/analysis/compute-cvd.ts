@@ -48,13 +48,22 @@ export function computeCVD(candles: Candle[]): CandleDelta[] {
 /**
  * 检测给定 K 线窗口内的订单流偏向。
  *
- * 判断逻辑：
- *   windowNetDelta = Σ delta（窗口内所有 K 线）
- *   cvdSlope = windowNetDelta / windowTotalVolume （归一化，范围约 -1 ~ +1）
+ * 算法（半窗口动量对比）：
+ *   将窗口一分为二（前半 / 后半），对比两段的净 delta 差值，
+ *   衡量买卖动能是在增强还是减弱，而非仅看全窗口绝对方向。
  *
- *   cvdSlope > +neutralThreshold  → bullish（净主动买入 > N% 成交量）
- *   cvdSlope < -neutralThreshold  → bearish（净主动卖出 > N% 成交量）
- *   否则                          → neutral（买卖双方相对均衡）
+ *   earlyDelta = 前半段 Σ delta
+ *   lateDelta  = 后半段 Σ delta
+ *   cvdSlope   = (lateDelta - earlyDelta) / totalVolume（归一化，约 -1 ~ +1）
+ *
+ *   cvdSlope > +neutralThreshold  → bullish（后段买压强于前段，动能增强）
+ *   cvdSlope < -neutralThreshold  → bearish（后段卖压强于前段，动能减弱）
+ *   否则                          → neutral（动能稳定或无方向性变化）
+ *
+ * 为什么用半窗口而非全窗口净 delta：
+ *   全窗口净 delta 对顺序不敏感（19根阴线+1根强阳线 ≈ 逆序结果相同），
+ *   会将窗口末尾刚形成的反转信号判定为 ORDER_FLOW_COUNTER，
+ *   错误降级正是 PHASE_18 目的在于确认的逆势突破信号。
  *
  * @param candles          K 线数组（时间升序）
  * @param window           分析窗口（最近 N 根 K 线，默认 20）
@@ -71,20 +80,32 @@ export function detectOrderFlowBias(
 
   const recent = candles.slice(-window);
 
+  // 样本不足时返回 neutral，避免少量 K 线产生虚假偏向
+  if (recent.length < window) {
+    return {
+      bias: "neutral",
+      cvdSlope: 0,
+      reason: `K 线数量不足（${recent.length}/${window}），跳过订单流分析`,
+    };
+  }
+
   const totalVolume = recent.reduce((s, c) => s + c.volume, 0);
   if (totalVolume === 0) {
     return { bias: "neutral", cvdSlope: 0, reason: "窗口内成交量为零，跳过订单流分析" };
   }
 
-  const netDelta = recent.reduce((s, c) => s + approxDelta(c), 0);
-  const cvdSlope = netDelta / totalVolume;
+  // ── 半窗口动量对比 ────────────────────────────────────────────────────────
+  const half = Math.floor(recent.length / 2);
+  const earlyDelta = recent.slice(0, half).reduce((s, c) => s + approxDelta(c), 0);
+  const lateDelta  = recent.slice(half).reduce((s, c) => s + approxDelta(c), 0);
+  const cvdSlope   = (lateDelta - earlyDelta) / totalVolume;
 
   if (cvdSlope > neutralThreshold) {
     const pct = (cvdSlope * 100).toFixed(1);
     return {
       bias: "bullish",
       cvdSlope,
-      reason: `CVD净多头占比 ${pct}%（阈值 ±${(neutralThreshold * 100).toFixed(0)}%），主动买入主导`,
+      reason: `CVD动量增强 +${pct}%（后半段买压＞前半段，阈值 ±${(neutralThreshold * 100).toFixed(0)}%）`,
     };
   }
 
@@ -93,7 +114,7 @@ export function detectOrderFlowBias(
     return {
       bias: "bearish",
       cvdSlope,
-      reason: `CVD净空头占比 ${pct}%（阈值 ±${(neutralThreshold * 100).toFixed(0)}%），主动卖出主导`,
+      reason: `CVD动量减弱 -${pct}%（后半段卖压＞前半段，阈值 ±${(neutralThreshold * 100).toFixed(0)}%）`,
     };
   }
 
@@ -101,7 +122,7 @@ export function detectOrderFlowBias(
   return {
     bias: "neutral",
     cvdSlope,
-    reason: `CVD斜率 ${pct}% 在中性区间（±${(neutralThreshold * 100).toFixed(0)}%），买卖双方均衡`,
+    reason: `CVD动量 ${pct}% 在中性区间（±${(neutralThreshold * 100).toFixed(0)}%），买卖动能稳定`,
   };
 }
 

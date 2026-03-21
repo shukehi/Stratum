@@ -118,35 +118,56 @@ describe("detectOrderFlowBias", () => {
     expect(r.cvdSlope).toBe(0);
   });
 
+  it("K 线数量不足 window 返回 neutral（P2 Codex 修复）", () => {
+    // 5 根 K 线 < 默认 window=20，应跳过分析
+    const cs = Array.from({ length: 5 }, (_, i) => candle(i, 95, 110, 90, 108, 1000));
+    const r = detectOrderFlowBias(cs);
+    expect(r.bias).toBe("neutral");
+    expect(r.cvdSlope).toBe(0);
+    expect(r.reason).toMatch(/不足/);
+  });
+
   it("全成交量为零返回 neutral", () => {
-    const cs = Array.from({ length: 5 }, (_, i) => candle(i, 95, 110, 90, 108, 0));
+    const cs = Array.from({ length: 20 }, (_, i) => candle(i, 95, 110, 90, 108, 0));
     const r = detectOrderFlowBias(cs);
     expect(r.bias).toBe("neutral");
     expect(r.cvdSlope).toBe(0);
   });
 
-  it("主动买入主导 → bullish", () => {
-    // 20 根强阳线（全部接近收盘高点）
-    const cs = Array.from({ length: 20 }, (_, i) =>
-      candle(i, 100, 110, 98, 109, 10_000), // close 很高，delta ≫ 0
-    );
+  it("后半段买压强于前半段 → bullish（半窗口动量增强）", () => {
+    // 前 10 根十字星（delta=0），后 10 根强阳线（delta≫0）
+    // 半窗口对比：earlyDelta=0，lateDelta>0 → cvdSlope>0
+    const cs = [
+      ...Array.from({ length: 10 }, (_, i) => candle(i,    100, 110, 90, 100, 5_000)), // 十字星
+      ...Array.from({ length: 10 }, (_, i) => candle(i+10, 100, 110, 98, 109, 5_000)), // 强阳线
+    ];
     const r = detectOrderFlowBias(cs);
     expect(r.bias).toBe("bullish");
     expect(r.cvdSlope).toBeGreaterThan(0.05);
   });
 
-  it("主动卖出主导 → bearish", () => {
-    // 20 根强阴线（全部收盘接近最低点）
-    const cs = Array.from({ length: 20 }, (_, i) =>
-      candle(i, 100, 102, 90, 91, 10_000), // close 很低，delta ≪ 0
-    );
+  it("后半段卖压强于前半段 → bearish（半窗口动量减弱）", () => {
+    // 前 10 根十字星，后 10 根强阴线
+    const cs = [
+      ...Array.from({ length: 10 }, (_, i) => candle(i,    100, 110, 90, 100, 5_000)), // 十字星
+      ...Array.from({ length: 10 }, (_, i) => candle(i+10, 100, 102, 90,  91, 5_000)), // 强阴线
+    ];
     const r = detectOrderFlowBias(cs);
     expect(r.bias).toBe("bearish");
     expect(r.cvdSlope).toBeLessThan(-0.05);
   });
 
-  it("买卖均衡（十字星）→ neutral", () => {
-    // 20 根十字星（close = open），delta = 0
+  it("前后半段完全相同 → neutral（动能稳定）", () => {
+    // 20 根相同强阳线：earlyDelta = lateDelta，deltaShift = 0
+    const cs = Array.from({ length: 20 }, (_, i) =>
+      candle(i, 100, 110, 98, 109, 5_000),
+    );
+    const r = detectOrderFlowBias(cs);
+    expect(r.bias).toBe("neutral");
+    expect(r.cvdSlope).toBe(0);
+  });
+
+  it("全十字星（delta=0）→ neutral", () => {
     const cs = Array.from({ length: 20 }, (_, i) =>
       candle(i, 100, 110, 90, 100, 5_000),
     );
@@ -155,39 +176,57 @@ describe("detectOrderFlowBias", () => {
     expect(r.cvdSlope).toBe(0);
   });
 
+  it("逆转场景：19根强阴 + 1根大阳 → bullish（P1 Codex修复验证）", () => {
+    // 旧算法（净delta）：19阴主导，结果=bearish，错误压制逆转做多信号
+    // 新算法（半窗口）：前10根阴线 vs 后10根（9根阴+1根大阳），如果大阳足够大则 bullish
+    // 使用：前10阴（小量），后9阴+1超大阳（大量，delta覆盖9阴）
+    const cs = [
+      ...Array.from({ length: 10 }, (_, i) => candle(i,    100, 102, 90,  91, 1_000)), // 小阴线
+      ...Array.from({ length: 9 },  (_, i) => candle(i+10, 100, 102, 90,  91, 1_000)), // 小阴线
+      candle(19, 90, 115, 88, 114, 50_000), // 超大阳线，close接近high，delta极大
+    ];
+    const r = detectOrderFlowBias(cs);
+    // 后段有超大阳线，lateDelta > earlyDelta → bullish
+    expect(r.bias).toBe("bullish");
+  });
+
   it("cvdSlope 归一化后绝对值 ≤ 1", () => {
-    const cs = Array.from({ length: 20 }, (_, i) =>
-      candle(i, 90, 110, 90, 110, 5_000), // 极端阳线 delta = volume
-    );
+    // 前半段全阴（-1方向），后半段全阳（+1方向），变化最大约 ≤ 1
+    const cs = [
+      ...Array.from({ length: 10 }, (_, i) => candle(i,    90, 110, 90, 90, 5_000)), // 极端阴
+      ...Array.from({ length: 10 }, (_, i) => candle(i+10, 90, 110, 90, 110, 5_000)), // 极端阳
+    ];
     const r = detectOrderFlowBias(cs);
     expect(Math.abs(r.cvdSlope)).toBeLessThanOrEqual(1);
   });
 
   it("自定义 window 只分析最近 N 根 K 线", () => {
-    // 前 15 根阳线 + 后 5 根阴线
-    // window=5 应检测到 bearish；window=20 应检测到 bullish 或 neutral
+    // 序列：10根十字星 + 10根强阳线
+    // window=10：只看后10根强阳。half=5，前5阳 vs 后5阳 → earlyDelta=lateDelta → neutral
+    // window=20：全部20根。half=10，前10十字星 vs 后10强阳 → lateDelta>earlyDelta → bullish
     const cs = [
-      ...Array.from({ length: 15 }, (_, i) => candle(i,    100, 110, 98, 109, 10_000)), // 阳线
-      ...Array.from({ length: 5 },  (_, i) => candle(i+15, 100, 102, 90,  91, 10_000)), // 阴线
+      ...Array.from({ length: 10 }, (_, i) => candle(i,    100, 110, 90, 100, 5_000)), // 十字星
+      ...Array.from({ length: 10 }, (_, i) => candle(i+10, 100, 110, 98, 109, 5_000)), // 强阳线
     ];
-    const rShort = detectOrderFlowBias(cs, 5);   // 只看最后 5 根阴线
-    const rLong  = detectOrderFlowBias(cs, 20);  // 包含 15 根阳线
+    const rTight = detectOrderFlowBias(cs, 10);  // 只看最后10根（全为强阳）
+    const rFull  = detectOrderFlowBias(cs, 20);  // 完整20根
 
-    expect(rShort.bias).toBe("bearish");
-    // 20 根窗口：15根阳+5根阴，净delta应为正 → bullish
-    expect(rLong.bias).toBe("bullish");
+    // window=10：10根相同强阳，前5=后5 → neutral（动能稳定）
+    expect(rTight.bias).toBe("neutral");
+    // window=20：前10十字星 vs 后10强阳 → bullish（动能增强）
+    expect(rFull.bias).toBe("bullish");
   });
 
   it("自定义 neutralThreshold 缩窄中性区间", () => {
-    // 十字星 delta = 0，无论阈值多小都应是 neutral
-    const cs = Array.from({ length: 10 }, (_, i) =>
+    // 十字星前后 delta=0，无论阈值多小都 neutral
+    const cs = Array.from({ length: 20 }, (_, i) =>
       candle(i, 100, 110, 90, 100, 1000),
     );
-    expect(detectOrderFlowBias(cs, 10, 0.001).bias).toBe("neutral");
+    expect(detectOrderFlowBias(cs, 20, 0.001).bias).toBe("neutral");
   });
 
   it("reason 字符串不为空", () => {
-    const cs = [bullCandle, bearCandle];
+    const cs = Array.from({ length: 20 }, (_, i) => candle(i, 100, 110, 90, 100, 1000));
     const r = detectOrderFlowBias(cs);
     expect(r.reason.length).toBeGreaterThan(0);
   });
