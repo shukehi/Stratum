@@ -1,150 +1,98 @@
 import type { Candle } from "../../domain/market/candle.js";
-import type {
-  DailyBias,
-  DailyBiasResult,
-  MarketStructure,
-} from "../../domain/market/daily-bias.js";
+import type { DailyBias, DailyBiasResult, PriceZone } from "../../domain/market/daily-bias.js";
+import { computeVolumeProfile, getPriceZone } from "../analysis/compute-vp.js";
 
 /**
- * 日线市场结构检测器  (PHASE_16 — 修订版)
+ * 日线偏向检测器  (PHASE_17 — Volume Profile 版本)
  *
- * 第一性原理：机构资金通过摆高/摆低序列留下结构性痕迹。
- * 多头结构 = 更高的摆高（HH）+ 更高的摆低（HL）→ 价格在向上寻找流动性。
- * 空头结构 = 更低的摆高（LH）+ 更低的摆低（LL）→ 价格在向下寻找流动性。
+ * 第一性原理：
+ *   不使用滞后指标（EMA）或时间相关结构（摆高/摆低），
+ *   而是直接读取成交量在价格区间的分布——这是机构建仓行为的真实反映。
  *
- * 算法步骤：
- *   1. 枢纽检测：遍历日线 K 线，找出摆高/摆低（Pivot High/Low）。
- *      枢纽高 = 该根 K 线的最高价严格大于左右各 swingLookback 根 K 线的最高价。
- *      枢纽低 = 该根 K 线的最低价严格小于左右各 swingLookback 根 K 线的最低价。
- *   2. 取最近 2 个已确认枢纽高（SH）和 2 个已确认枢纽低（SL）。
- *   3. 对比相邻枢纽，判断结构：
- *      HH_HL → bias = bullish  |  LH_LL → bias = bearish
- *      HH_LL / LH_HL → bias = neutral（膨胀 / 收敛）
- *      insufficient → bias = neutral（枢纽点不足）
+ * 判断逻辑（顺序应用）：
+ *   数据不足（< vpLookbackDays 根）→ neutral（信息不足，不干扰信号）
+ *   Volume Profile 计算失败       → neutral（极端情况保护）
+ *   close > VAH                  → bearish（溢价区，价格偏贵，倾向回归）
+ *   close < VAL                  → bullish（折价区，价格偏便宜，倾向回归）
+ *   VAL ≤ close ≤ VAH            → neutral（均衡区，双方都接受此价格）
  *
- * swingLookback（默认 3）:
- *   枢纽必须是 2×lookback+1 根 K 线窗口内的最高/最低点。
- *   lookback=3 → 7 根窗口，过滤日内噪声，识别主要结构点。
+ * 参数说明：
+ *   vpLookbackDays（默认 30）
+ *     用于计算 Volume Profile 的日线 K 线数量。
+ *     30 根 ≈ 1 个月，捕捉近期机构建仓区域。
+ *     太长（> 90 根）会稀释近期成交量的信号意义；
+ *     太短（< 15 根）统计样本不足，VPOC 不稳定。
  *
- * 为什么不用 EMA：
- *   EMA 是机构行为的滞后映射；摆高/摆低序列是机构行为的直接体现。
- *   在 CHoCH（结构转变）发生时，EMA 仍滞后显示旧趋势，
- *   而摆高/摆低序列能即时反映新结构，避免在关键转折点误判。
+ *   vpBucketCount（默认 200）
+ *     价格区间分桶数量。200 桶在 BTC 这样宽幅资产上约每桶 200~500 美元，
+ *     精度足够识别机构关键成交区间。
+ *
+ *   vpValueAreaPercent（默认 0.70 = 70%）
+ *     价值区间覆盖比例，遵循市场剖析（Market Profile）70% 惯例。
  */
 export function detectDailyBias(
   candles1d: Candle[],
-  swingLookback = 3,
+  vpLookbackDays = 30,
+  vpBucketCount = 200,
+  vpValueAreaPercent = 0.70,
 ): DailyBiasResult {
   const latestClose = candles1d.at(-1)?.close ?? 0;
 
-  // 至少需要 lookback * 2 + 4 根才能提取 2 个枢纽
-  const MIN_CANDLES = swingLookback * 2 + 4;
-  if (candles1d.length < MIN_CANDLES) {
+  // 数据不足保护
+  if (candles1d.length < vpLookbackDays) {
     return {
       bias: "neutral",
-      structure: "insufficient",
-      lastSwingHigh: null,
-      lastSwingLow: null,
+      priceZone: "equilibrium",
+      vpoc: latestClose,
+      vah: latestClose,
+      val: latestClose,
       latestClose,
-      reason: `日线 K 线数量不足（当前 ${candles1d.length} 根，需要至少 ${MIN_CANDLES} 根），无法判断结构，默认中性`,
+      reason: `日线数据不足（当前 ${candles1d.length} 根，需要至少 ${vpLookbackDays} 根），默认中性`,
     };
   }
 
-  // ── 步骤 1: 枢纽检测 ──────────────────────────────────────────────────────
-  const swingHighs = findSwingHighs(candles1d, swingLookback);
-  const swingLows  = findSwingLows(candles1d, swingLookback);
+  // 取最近 vpLookbackDays 根 K 线计算 Volume Profile
+  const recentCandles = candles1d.slice(-vpLookbackDays);
 
-  // ── 步骤 2: 取最近 2 个已确认枢纽 ─────────────────────────────────────────
-  if (swingHighs.length < 2 || swingLows.length < 2) {
+  const vp = computeVolumeProfile(recentCandles, {
+    bucketCount: vpBucketCount,
+    valueAreaPercent: vpValueAreaPercent,
+  });
+
+  // VP 计算失败（极端情况：价格区间为零）
+  if (!vp) {
     return {
       bias: "neutral",
-      structure: "insufficient",
-      lastSwingHigh: swingHighs.at(-1)?.price ?? null,
-      lastSwingLow:  swingLows.at(-1)?.price ?? null,
+      priceZone: "equilibrium",
+      vpoc: latestClose,
+      vah: latestClose,
+      val: latestClose,
       latestClose,
-      reason: `已确认枢纽高 ${swingHighs.length} 个、枢纽低 ${swingLows.length} 个，不足以判断结构（需各 ≥ 2），默认中性`,
+      reason: "Volume Profile 计算失败（价格区间为零），默认中性",
     };
   }
 
-  const prevSH = swingHighs[swingHighs.length - 2].price;
-  const lastSH = swingHighs[swingHighs.length - 1].price;
-  const prevSL = swingLows[swingLows.length - 2].price;
-  const lastSL = swingLows[swingLows.length - 1].price;
-
-  // ── 步骤 3: 结构分类 ───────────────────────────────────────────────────────
-  const higherHigh = lastSH > prevSH;
-  const higherLow  = lastSL > prevSL;
-
-  let structure: MarketStructure;
-  if      ( higherHigh &&  higherLow) structure = "HH_HL";
-  else if (!higherHigh && !higherLow) structure = "LH_LL";
-  else if ( higherHigh && !higherLow) structure = "HH_LL";
-  else                                structure = "LH_HL";
+  const { vpoc, vah, val } = vp;
+  const priceZone: PriceZone = getPriceZone(latestClose, vah, val);
 
   const bias: DailyBias =
-    structure === "HH_HL" ? "bullish" :
-    structure === "LH_LL" ? "bearish" :
+    priceZone === "premium"  ? "bearish" :
+    priceZone === "discount" ? "bullish" :
     "neutral";
 
-  const structureLabel: Record<MarketStructure, string> = {
-    HH_HL:        "更高摆高 + 更高摆低（多头结构）",
-    LH_LL:        "更低摆高 + 更低摆低（空头结构）",
-    HH_LL:        "更高摆高 + 更低摆低（膨胀区间，中性）",
-    LH_HL:        "更低摆高 + 更高摆低（收敛区间，中性）",
-    insufficient: "枢纽不足",
+  const zoneLabel: Record<PriceZone, string> = {
+    premium:     `溢价区（收盘 ${latestClose.toFixed(0)} > VAH ${vah.toFixed(0)}），价格偏贵，偏空`,
+    equilibrium: `均衡区（VAL ${val.toFixed(0)} ≤ 收盘 ${latestClose.toFixed(0)} ≤ VAH ${vah.toFixed(0)}），双向中性`,
+    discount:    `折价区（收盘 ${latestClose.toFixed(0)} < VAL ${val.toFixed(0)}），价格偏便宜，偏多`,
   };
 
   return {
     bias,
-    structure,
-    lastSwingHigh: lastSH,
-    lastSwingLow:  lastSL,
+    priceZone,
+    vpoc,
+    vah,
+    val,
     latestClose,
-    reason: `日线结构：${structureLabel[structure]}。摆高 ${prevSH.toFixed(0)} → ${lastSH.toFixed(0)}，摆低 ${prevSL.toFixed(0)} → ${lastSL.toFixed(0)}`,
+    reason: `VPOC ${vpoc.toFixed(0)} | ${zoneLabel[priceZone]}（近 ${vpLookbackDays} 根日线 Volume Profile）`,
   };
-}
-
-// ── 枢纽检测辅助函数 ──────────────────────────────────────────────────────────
-
-type SwingPoint = { index: number; price: number };
-
-/**
- * 找出所有已确认的摆高（Pivot High）。
- * 条件：candles[i].high 严格大于左右各 lookback 根 K 线的最高价。
- * 右侧确认需要 lookback 根后续 K 线，因此最多检测到 length - lookback - 1 位置。
- */
-function findSwingHighs(candles: Candle[], lookback: number): SwingPoint[] {
-  const pivots: SwingPoint[] = [];
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const h = candles[i].high;
-    let isSwing = true;
-    for (let j = i - lookback; j <= i + lookback; j++) {
-      if (j !== i && candles[j].high >= h) {
-        isSwing = false;
-        break;
-      }
-    }
-    if (isSwing) pivots.push({ index: i, price: h });
-  }
-  return pivots;
-}
-
-/**
- * 找出所有已确认的摆低（Pivot Low）。
- * 条件：candles[i].low 严格小于左右各 lookback 根 K 线的最低价。
- */
-function findSwingLows(candles: Candle[], lookback: number): SwingPoint[] {
-  const pivots: SwingPoint[] = [];
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const l = candles[i].low;
-    let isSwing = true;
-    for (let j = i - lookback; j <= i + lookback; j++) {
-      if (j !== i && candles[j].low <= l) {
-        isSwing = false;
-        break;
-      }
-    }
-    if (isSwing) pivots.push({ index: i, price: l });
-  }
-  return pivots;
 }

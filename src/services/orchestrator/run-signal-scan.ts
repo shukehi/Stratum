@@ -150,15 +150,27 @@ export async function runSignalScan(
   saveCandles(db, symbol, "1h", candles1h);
   if (candles1d.length > 0) saveCandles(db, symbol, "1d", candles1d);
 
-  // ── PHASE_16: 日线市场结构过滤（摆高/摆低序列，第一性原理）────────────────
+  // ── PHASE_17: 日线 Volume Profile 偏向过滤（第一性原理）────────────────────
   const dailyBiasResult =
-    candles1d.length >= config.dailySwingLookback * 2 + 4
-      ? detectDailyBias(candles1d, config.dailySwingLookback)
+    candles1d.length >= config.vpLookbackDays
+      ? detectDailyBias(
+          candles1d,
+          config.vpLookbackDays,
+          config.vpBucketCount,
+          config.vpValueAreaPercent,
+        )
       : null;
   if (dailyBiasResult) {
     logger.debug(
-      { bias: dailyBiasResult.bias, reason: dailyBiasResult.reason },
-      "PHASE_16 daily bias"
+      {
+        bias: dailyBiasResult.bias,
+        priceZone: dailyBiasResult.priceZone,
+        vpoc: dailyBiasResult.vpoc,
+        vah: dailyBiasResult.vah,
+        val: dailyBiasResult.val,
+        reason: dailyBiasResult.reason,
+      },
+      "PHASE_17 daily VP bias"
     );
   }
 

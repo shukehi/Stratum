@@ -53,9 +53,11 @@ export type StrategyConfig = {
   readonly allowEventDrivenSignals: boolean;
   readonly maxNewsItemsForPrompt: number;
 
-  // --- 日线趋势过滤 ---
-  readonly dailyDataLimit: number;    // 拉取的日线 K 线数量
-  readonly dailySwingLookback: number; // 枢纽检测回看根数（默认 3，即 7 根窗口）
+  // --- 日线趋势过滤（Volume Profile）---
+  readonly dailyDataLimit: number;       // 拉取的日线 K 线数量（持久化缓存用）
+  readonly vpLookbackDays: number;       // VP 计算窗口（近 N 根日线，默认 30）
+  readonly vpBucketCount: number;        // VP 价格分桶数（默认 200）
+  readonly vpValueAreaPercent: number;   // 价值区间覆盖比例（默认 0.70 = 70%）
 
   // --- 校准 ---
   readonly calibrationMinSampleSize: number;
@@ -108,9 +110,11 @@ export const strategyConfig = {
   allowEventDrivenSignals: false,
   maxNewsItemsForPrompt: 10,
 
-  // --- 日线趋势过滤 ---
-  dailyDataLimit: 100,       // 100 根日线 ≈ 3 个月
-  dailySwingLookback: 3,     // 枢纽 = 7 根窗口内的最高/最低点（3+1+3）
+  // --- 日线趋势过滤（Volume Profile）---
+  dailyDataLimit: 100,          // 拉取 100 根日线（持久化缓存）
+  vpLookbackDays: 30,           // 用最近 30 根日线计算 VP（≈ 1 个月）
+  vpBucketCount: 200,           // 200 个等宽价格桶
+  vpValueAreaPercent: 0.70,     // 价值区间覆盖 70% 成交量（Market Profile 惯例）
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,
