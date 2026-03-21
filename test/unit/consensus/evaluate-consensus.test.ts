@@ -584,3 +584,70 @@ describe("gate 8: 日线趋势过滤 (PHASE_16)", () => {
     expect(c.reasonCodes).toContain("DAILY_TREND_COUNTER");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("gate 9: CVD 订单流确认 (PHASE_18)", () => {
+  it("逆势做多 + bearish CVD → 等级降一级 + ORDER_FLOW_COUNTER reasonCode", () => {
+    // high-conviction 做多信号 + bearish 订单流 → should downgrade to standard
+    const input = makeInput({ orderFlowBias: "bearish" });
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("standard");
+    expect(c.reasonCodes).toContain("ORDER_FLOW_COUNTER");
+    expect(c.reasonCodes).not.toContain("ORDER_FLOW_ALIGNED");
+  });
+
+  it("逆势做空 + bullish CVD → 等级降一级 + ORDER_FLOW_COUNTER reasonCode", () => {
+    const input: ConsensusInput = {
+      symbol: "BTCUSDT",
+      setups: [makePassingShortSetup()],
+      ctx: makeBullishCtx(),
+      config: strategyConfig,
+      orderFlowBias: "bullish",
+    };
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("standard");
+    expect(c.reasonCodes).toContain("ORDER_FLOW_COUNTER");
+  });
+
+  it("顺势做多 + bullish CVD → 等级不变 + ORDER_FLOW_ALIGNED reasonCode", () => {
+    const input = makeInput({ orderFlowBias: "bullish" });
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("high-conviction");
+    expect(c.reasonCodes).toContain("ORDER_FLOW_ALIGNED");
+    expect(c.reasonCodes).not.toContain("ORDER_FLOW_COUNTER");
+  });
+
+  it("neutral CVD → 等级不变，无 ORDER_FLOW_* reasonCode", () => {
+    const input = makeInput({ orderFlowBias: "neutral" });
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("high-conviction");
+    expect(c.reasonCodes).not.toContain("ORDER_FLOW_COUNTER");
+    expect(c.reasonCodes).not.toContain("ORDER_FLOW_ALIGNED");
+  });
+
+  it("未传入 orderFlowBias → 等级不变，无 ORDER_FLOW_* reasonCode", () => {
+    const input = makeInput(); // no orderFlowBias
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("high-conviction");
+    expect(c.reasonCodes).not.toContain("ORDER_FLOW_COUNTER");
+    expect(c.reasonCodes).not.toContain("ORDER_FLOW_ALIGNED");
+  });
+
+  it("standard 信号逆势 CVD → 降至 watch", () => {
+    // score=70 → standard, then counter-flow → watch
+    const input = makeInput(
+      { orderFlowBias: "bearish" },
+      { structureScore: 70, confluenceFactors: ["fvg"] }
+    );
+    const [c] = evaluateConsensus(input);
+    expect(c).toBeDefined();
+    expect(c.signalGrade).toBe("watch");
+    expect(c.reasonCodes).toContain("ORDER_FLOW_COUNTER");
+  });
+});
