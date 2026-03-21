@@ -16,6 +16,7 @@
 | PHASE_16 | 日线趋势过滤（市场结构法，摆高摆低） | 2609c4b |
 | PHASE_17 | Volume Profile 替换日线偏向（溢价/均衡/折价，614测试全通过） | 11f3e72 |
 | PHASE_18 | CVD 订单流确认层（Kaufman近似，4h信号过滤，636测试全通过） | 7b10346 |
+| PHASE_19 | 等高等低检测（Equal H/L，止损密集区识别，659测试全通过） | 3c5b908 |
 
 ---
 
@@ -27,22 +28,18 @@
 
 ---
 
-### PHASE_19 — 等高等低（Equal Highs/Lows）检测
-**优先级**: ⭐⭐⭐ | **估时**: CC ~20分钟
-
-**背景**: 普通摆高摆低代表单个止损聚集区。
-等高等低（多个K线的高/低点在容差范围内重合）代表止损极度密集的区域，
-机构更倾向于优先扫描这些位置。
+### ✅ PHASE_19 — 等高等低（Equal Highs/Lows）检测 · commit 3c5b908
 
 **交付物**:
-- [ ] `src/services/structure/detect-equal-levels.ts`
-  - `detectEqualHighs(candles, tolerance?, minCount?)` → EqualLevel[]
-  - `detectEqualLows(candles, tolerance?, minCount?)` → EqualLevel[]
-  - tolerance默认0.1%（价格容差），minCount默认2
-- [ ] 将等高等低识别结果集成到 `StructuralSetup`
-- [ ] 等高等低作为更高优先级的流动性目标（优于普通摆高摆低）
-- [ ] 单元测试：识别准确率、容差边界
-- [ ] 更新 `ARCHITECTURE.md` PHASE_19完成状态
+- [x] `src/domain/market/equal-level.ts` — `EqualLevel` 类型定义
+- [x] `src/services/structure/detect-equal-levels.ts`
+  - `detectEqualHighs(candles, tolerance=0.1%, minCount=2)` → EqualLevel[]
+  - `detectEqualLows(candles, tolerance=0.1%, minCount=2)` → EqualLevel[]
+- [x] 等高等低结果集成到 `detect-structural-setups.ts`（步骤 5b）
+- [x] 等高等低作为更高优先级流动性目标（`equalLevelBonus=12 > confluenceBonus=10`）
+- [x] `EQUAL_LEVEL_LIQUIDITY` ReasonCode + 方向约束
+- [x] 单元测试：24 检测逻辑 + 12 加成集成，659/659 全通过
+- [x] ARCHITECTURE.md PHASE_19 完成状态 ✅
 
 ---
 
