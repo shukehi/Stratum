@@ -19,6 +19,14 @@
 
 ---
 
+### 技术债务
+
+| ID | 内容 | 来源 | 优先级 |
+|----|------|------|--------|
+| DEBT_01 | CCXT `fetchOHLCV` 可能包含未收盘的当前 K 线，所有 K 线分析（VP/CVD/结构检测）都受影响，需统一在数据获取层过滤 `slice(0, -1)` | Codex adversarial review (PHASE_18 F2) | ⭐⭐ |
+
+---
+
 ### PHASE_19 — 等高等低（Equal Highs/Lows）检测
 **优先级**: ⭐⭐⭐ | **估时**: CC ~20分钟
 
