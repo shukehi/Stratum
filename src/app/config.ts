@@ -62,6 +62,7 @@ export type StrategyConfig = {
   // --- 等高等低（Equal Highs / Lows）---
   readonly equalLevelTolerance: number;   // 价格容差比例（默认 0.001 = 0.1%）
   readonly equalLevelBonus: number;       // 命中等高等低区域时的评分加成（默认 12）
+  readonly equalLevelMaxAgeDays: number;  // 等高等低区域最大有效期（天，默认 30）
 
   // --- 校准 ---
   readonly calibrationMinSampleSize: number;
@@ -123,6 +124,7 @@ export const strategyConfig = {
   // --- 等高等低（Equal Highs / Lows）---
   equalLevelTolerance: 0.001,  // 0.1% 容差（BTC@50k ≈ ±50 USDT）
   equalLevelBonus: 12,         // 高于 confluenceBonus(10)，体现更高密度止损聚集
+  equalLevelMaxAgeDays: 30,    // 超过 30 天未触碰的等高等低不参与加成评分
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,

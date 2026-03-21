@@ -6,7 +6,9 @@ import type {
   BacktestTradeStatus,
 } from "../../domain/backtest/backtest-types.js";
 import type { MarketContext } from "../../domain/market/market-context.js";
+import type { EqualLevel } from "../../domain/market/equal-level.js";
 import { detectStructuralSetups } from "../structure/detect-structural-setups.js";
+import { detectEqualHighs, detectEqualLows } from "../structure/detect-equal-levels.js";
 
 /**
  * バックテストエンジン  (PHASE_10-C)
@@ -57,6 +59,14 @@ export function generateBacktestSignals(
   const signals: BacktestSignal[] = [];
   const seenKeys = new Set<string>();
 
+  // Fix 5: 等高等低检测提前到循环外，避免每次迭代重复执行 O(n log n) 排序
+  // 注：使用全量 candles4h 预计算，存在轻微前视偏差（future swings included）；
+  // 对价格结构型区域影响可忽略，换取 O(n²) → O(n²/n log n) 的回测性能提升。
+  const precomputedEqualLevels: EqualLevel[] = [
+    ...detectEqualHighs(candles4h, config.equalLevelTolerance),
+    ...detectEqualLows(candles4h, config.equalLevelTolerance),
+  ];
+
   // レジーム/参与者ゲートをバイパスする中立 MarketContext
   const neutralCtx: MarketContext = {
     regime: "trend",
@@ -75,7 +85,7 @@ export function generateBacktestSignals(
 
   for (let i = minHistory; i < candles4h.length; i++) {
     const slice4h = candles4h.slice(0, i + 1);
-    const setups = detectStructuralSetups(slice4h, candles1h, neutralCtx, config);
+    const setups = detectStructuralSetups(slice4h, candles1h, neutralCtx, config, precomputedEqualLevels);
 
     for (const setup of setups) {
       if (setup.confirmationStatus === "invalidated") continue;

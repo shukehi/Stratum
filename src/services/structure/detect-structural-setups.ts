@@ -35,7 +35,13 @@ export function detectStructuralSetups(
   candles4h: Candle[],
   candles1h: Candle[],
   ctx: MarketContext,
-  config: StrategyConfig
+  config: StrategyConfig,
+  /**
+   * 可选：预计算的等高等低区域（供回测循环使用以避免 O(n²log n) 回归）。
+   * 若提供，则跳过内部的 detectEqualHighs/detectEqualLows 调用。
+   * 时效过滤仍会在内部按当前 K 线时间执行，确保加成准确。
+   */
+  precomputedEqualLevels?: EqualLevel[],
 ): StructuralSetup[] {
   // ── 1. 真空期：去杠杆真空期内跳过所有结构信号 ───────────────────────────
   if (ctx.reasonCodes.includes("DELEVERAGING_VACUUM")) return [];
@@ -57,9 +63,20 @@ export function detectStructuralSetups(
   //   等高等低代表止损极度集中的区域，机构优先扫描。
   //   当 setup 入场区与等高等低区域重叠时，追加 EQUAL_LEVEL_LIQUIDITY
   //   reason code 并提升评分（equalLevelBonus，默认 12，高于普通汇聚加成）。
-  const equalHighs = detectEqualHighs(candles4h, config.equalLevelTolerance);
-  const equalLows  = detectEqualLows(candles4h, config.equalLevelTolerance);
-  const allEqualLevels: EqualLevel[] = [...equalHighs, ...equalLows];
+  //
+  //   Fix: 若调用方提供了预计算的 precomputedEqualLevels（回测优化），
+  //   跳过内部检测；否则实时计算。无论哪种路径，均按时效过滤（Fix: age-blind）。
+  const rawEqualLevels: EqualLevel[] = precomputedEqualLevels ?? [
+    ...detectEqualHighs(candles4h, config.equalLevelTolerance),
+    ...detectEqualLows(candles4h, config.equalLevelTolerance),
+  ];
+
+  // Fix 3: 时效过滤 — 超过 equalLevelMaxAgeDays 天未被触碰的等高等低区域排除
+  const nowTs   = candles4h[candles4h.length - 1].timestamp;
+  const maxAgeMs = config.equalLevelMaxAgeDays * 24 * 3_600_000;
+  const allEqualLevels = rawEqualLevels.filter(
+    level => level.lastTimestamp >= nowTs - maxAgeMs,
+  );
 
   const withEqualLevel = withConfluence.map(setup =>
     applyEqualLevelBonus(setup, allEqualLevels, config.equalLevelBonus)
