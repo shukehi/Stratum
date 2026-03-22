@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 const EnvSchema = z.object({
-  EXCHANGE_NAME: z.string().default("binance"),
+  EXCHANGE_NAME: z.string().default("binanceusdm"),
   SYMBOL: z.string().default("BTC/USDT:USDT"),
   SPOT_SYMBOL: z.string().default("BTC/USDT"),
   NEWS_API_KEY: z.string().optional(),

@@ -48,7 +48,7 @@ bash ./scripts/deploy-vps.sh
 ### 3. 最小 `.env` 配置
 
 ```env
-EXCHANGE_NAME=binance
+EXCHANGE_NAME=binanceusdm
 SYMBOL=BTC/USDT:USDT
 SPOT_SYMBOL=BTC/USDT
 DATABASE_URL=./data/stratum.db
@@ -65,9 +65,9 @@ LOG_LEVEL=info
 ### 4. 手动测试
 
 ```bash
-pnpm backtest --symbol BTCUSDT --limit 300
-pnpm report --all
-pnpm dev
+corepack pnpm backtest --symbol BTCUSDT --limit 300
+corepack pnpm report --all
+sudo ./scripts/boot.sh --logs
 ```
 
 ### 5. 挂成 systemd 服务
@@ -191,9 +191,9 @@ bash ./scripts/export-snapshot.sh
 
 该脚本会导出到 `exports/` 目录，并打包：
 
-1. 当前 SQLite 数据库副本
+1. 当前 SQLite 数据库的一致性快照（服务运行中也可导出）
 2. `logs/` 目录
-3. `pnpm report --all` 输出
+3. 基于快照数据库生成的 `pnpm report --all` 输出
 4. 一份去敏后的运行元数据摘要
 
 导出后按脚本输出的 `scp` 命令把 `tar.gz` 拉回本地，再把文件路径发给我即可。
@@ -254,7 +254,7 @@ pnpm cli help
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `EXCHANGE_NAME` | 交易所（期货用 binanceusdm） | `binance` |
+| `EXCHANGE_NAME` | 交易所（期货用 `binanceusdm`，现货自动映射到 `binance`） | `binanceusdm` |
 | `SYMBOL` | 合约品种 | `BTC/USDT:USDT` |
 | `SPOT_SYMBOL` | 现货品种 | `BTC/USDT` |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | — |

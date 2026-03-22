@@ -16,11 +16,6 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v corepack >/dev/null 2>&1; then
-  echo "corepack is required."
-  exit 1
-fi
-
 if [[ ! -f ".env" ]]; then
   echo ".env is missing in ${ROOT_DIR}."
   exit 1
@@ -42,19 +37,40 @@ if [[ ! -f "$DATABASE_PATH" ]]; then
   exit 1
 fi
 
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable >/dev/null 2>&1 || true
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "pnpm@${PNPM_VERSION}" --activate >/dev/null
-PNPM_CMD=(corepack pnpm)
+if command -v corepack >/dev/null 2>&1; then
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable >/dev/null 2>&1 || true
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "pnpm@${PNPM_VERSION}" --activate >/dev/null
+  PNPM_CMD=(corepack pnpm)
+elif command -v pnpm >/dev/null 2>&1; then
+  PNPM_CMD=(pnpm)
+else
+  echo "pnpm is required."
+  exit 1
+fi
 
 mkdir -p "$SNAPSHOT_DIR"/logs
 
-cp "$DATABASE_PATH" "$SNAPSHOT_DIR/stratum.db"
+DATABASE_SNAPSHOT_PATH="$SNAPSHOT_DIR/stratum.db"
 
-for suffix in -shm -wal; do
-  if [[ -f "${DATABASE_PATH}${suffix}" ]]; then
-    cp "${DATABASE_PATH}${suffix}" "$SNAPSHOT_DIR/"
-  fi
-done
+DATABASE_PATH="$DATABASE_PATH" DATABASE_SNAPSHOT_PATH="$DATABASE_SNAPSHOT_PATH" \
+  node --input-type=module <<'EOF'
+import Database from "better-sqlite3";
+
+const source = process.env.DATABASE_PATH;
+const target = process.env.DATABASE_SNAPSHOT_PATH;
+
+if (!source || !target) {
+  console.error("DATABASE_PATH or DATABASE_SNAPSHOT_PATH is missing.");
+  process.exit(1);
+}
+
+const db = new Database(source, { readonly: true });
+try {
+  await db.backup(target);
+} finally {
+  db.close();
+}
+EOF
 
 if [[ -d "${ROOT_DIR}/logs" ]]; then
   cp -R "${ROOT_DIR}/logs/." "$SNAPSHOT_DIR/logs/"
@@ -63,6 +79,7 @@ fi
 {
   echo "snapshot_utc=${RUN_ID}"
   echo "database_path=${DATABASE_PATH}"
+  echo "database_snapshot_path=${DATABASE_SNAPSHOT_PATH}"
   echo "exchange_name=${EXCHANGE_NAME:-}"
   echo "symbol=${SYMBOL:-}"
   echo "spot_symbol=${SPOT_SYMBOL:-}"
@@ -72,7 +89,7 @@ fi
   echo "log_level=${LOG_LEVEL:-}"
 } > "$SNAPSHOT_DIR/metadata.txt"
 
-"${PNPM_CMD[@]}" report --all > "$SNAPSHOT_DIR/report-all.txt" || true
+DATABASE_URL="$DATABASE_SNAPSHOT_PATH" "${PNPM_CMD[@]}" report --all > "$SNAPSHOT_DIR/report-all.txt" || true
 
 tar -czf "$ARCHIVE_PATH" -C "$EXPORT_DIR" "$(basename "$SNAPSHOT_DIR")"
 

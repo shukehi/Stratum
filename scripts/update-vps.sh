@@ -48,14 +48,16 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v corepack >/dev/null 2>&1; then
-  echo "corepack is required. Install Node.js with Corepack support first."
+if command -v corepack >/dev/null 2>&1; then
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable >/dev/null 2>&1 || true
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "pnpm@${PNPM_VERSION}" --activate >/dev/null
+  PNPM_CMD=(corepack pnpm)
+elif command -v pnpm >/dev/null 2>&1; then
+  PNPM_CMD=(pnpm)
+else
+  echo "pnpm is required. Install pnpm or Node.js with Corepack support first."
   exit 1
 fi
-
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable >/dev/null 2>&1 || true
-COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "pnpm@${PNPM_VERSION}" --activate >/dev/null
-PNPM_CMD=(corepack pnpm)
 
 echo "Fetching latest code for branch '$CURRENT_BRANCH'..."
 git pull --ff-only origin "$CURRENT_BRANCH"
