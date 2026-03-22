@@ -5,15 +5,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
+PNPM_VERSION="9.15.2"
+
 if ! command -v node >/dev/null 2>&1; then
   echo "node is required. Install Node.js 20+ first."
   exit 1
 fi
 
-if ! command -v pnpm >/dev/null 2>&1; then
-  echo "pnpm is required. Run: corepack enable && corepack prepare pnpm@latest --activate"
+if ! command -v corepack >/dev/null 2>&1; then
+  echo "corepack is required. Install Node.js with Corepack support first."
   exit 1
 fi
+
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack enable >/dev/null 2>&1 || true
+COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare "pnpm@${PNPM_VERSION}" --activate >/dev/null
+PNPM_CMD=(corepack pnpm)
 
 if [[ ! -f ".env" ]]; then
   cp ".env.example" ".env"
@@ -31,13 +37,13 @@ if [[ "$database_url" != ":memory:" ]]; then
 fi
 
 echo "Installing dependencies..."
-pnpm install --frozen-lockfile
-pnpm rebuild better-sqlite3
+"${PNPM_CMD[@]}" install --frozen-lockfile --force
+"${PNPM_CMD[@]}" rebuild better-sqlite3
 
 echo "Running verification..."
-pnpm typecheck
-pnpm test
-pnpm build
+"${PNPM_CMD[@]}" typecheck
+"${PNPM_CMD[@]}" test
+"${PNPM_CMD[@]}" build
 
 cat <<EOF
 

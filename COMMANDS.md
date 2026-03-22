@@ -32,7 +32,7 @@ sudo corepack prepare pnpm@latest --activate
 ```bash
 git clone <repo-url> /opt/stratum
 cd /opt/stratum
-pnpm deploy:vps
+bash ./scripts/deploy-vps.sh
 ```
 
 该脚本会自动完成：
@@ -83,7 +83,7 @@ journalctl -u stratum.service -f
 
 ```bash
 cd /opt/stratum
-pnpm update:vps
+bash ./scripts/update-vps.sh
 ```
 
 该脚本会自动完成：
