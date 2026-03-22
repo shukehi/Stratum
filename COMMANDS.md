@@ -182,6 +182,22 @@ pnpm report --logs 50
 pnpm report --all
 ```
 
+### 导出 7 天样本快照
+
+```bash
+cd /opt/stratum
+bash ./scripts/export-snapshot.sh
+```
+
+该脚本会导出到 `exports/` 目录，并打包：
+
+1. 当前 SQLite 数据库副本
+2. `logs/` 目录
+3. `pnpm report --all` 输出
+4. 一份去敏后的运行元数据摘要
+
+导出后按脚本输出的 `scp` 命令把 `tar.gz` 拉回本地，再把文件路径发给我即可。
+
 ---
 
 ## 持仓查询
