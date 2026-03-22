@@ -1,14 +1,18 @@
 import type { LiquiditySession } from "../../domain/market/market-context.js";
-import type { TelegramConfig } from "../alerting/send-alert.js";
 import { getCurrentSession } from "../../utils/session.js";
 import { logger } from "../../app/logger.js";
+import {
+  hasNotificationChannel,
+  sendTextNotification,
+  type NotificationConfig,
+} from "../alerting/send-notification.js";
 
 /**
  * 交易时段监控器  (PHASE_13)
  *
  * 职责：
  *   每次调用检测当前交易时段是否发生切换；
- *   若发生切换 → 同时在终端（logger.info）和 Telegram 推送提醒。
+ *   若发生切换 → 同时在终端（logger.info）和通知通道推送提醒。
  *
  * 状态管理：
  *   lastSession 由调用方持有（index.ts 闭包），此函数本身无状态。
@@ -78,12 +82,12 @@ const SESSION_META: Record<LiquiditySession, SessionMeta> = {
  * 检测时段变化，发生切换时推送终端 + Telegram 通知。
  *
  * @param lastSession  上一次记录的时段（null = 首次调用，仅初始化）
- * @param telegramConfig  Telegram 配置（可选，未配置则仅打印终端日志）
+ * @param notificationConfig  通知配置（可选，未配置则仅打印终端日志）
  * @returns 当前时段（供下次调用时传入作为 lastSession）
  */
 export async function monitorSession(
   lastSession: LiquiditySession | null,
-  telegramConfig?: TelegramConfig
+  notificationConfig?: NotificationConfig
 ): Promise<LiquiditySession> {
   const currentSession = getCurrentSession();
 
@@ -119,12 +123,15 @@ export async function monitorSession(
     `Session: ${prevMeta.nameCn} → ${meta.nameCn}`
   );
 
-  // 2. Telegram 消息
-  if (telegramConfig?.botToken && telegramConfig?.chatId) {
+  // 2. 通知消息
+  if (hasNotificationChannel(notificationConfig)) {
     const message = formatSessionMessage(meta);
-    await sendTelegramText(message, telegramConfig).catch((err) => {
-      logger.warn({ err }, "Session monitor: Telegram 推送失败");
+    const result = await sendTextNotification(message, notificationConfig!, fetch, {
+      telegramParseMode: "Markdown",
     });
+    if (!result.anyDelivered) {
+      logger.warn({ channels: result }, "Session monitor: 通知推送失败");
+    }
   }
 
   return currentSession;
@@ -139,16 +146,4 @@ function formatSessionMessage(meta: SessionMeta): string {
     `🔚 收盘：UTC ${meta.closeUtc}  |  北京 ${meta.closeBeijing}\n` +
     `📊 ${meta.note}`
   );
-}
-
-async function sendTelegramText(text: string, config: TelegramConfig): Promise<void> {
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: config.chatId, text, parse_mode: "Markdown" }),
-  });
-  if (!res.ok) {
-    throw new Error(`Telegram API ${res.status}: ${await res.text()}`);
-  }
 }

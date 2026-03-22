@@ -11,6 +11,13 @@ const EnvSchema = z.object({
   LLM_MODEL: z.string().trim().optional(), // 不填则按 provider 使用默认模型
   TELEGRAM_BOT_TOKEN: z.string().trim().optional(),
   TELEGRAM_CHAT_ID: z.string().trim().optional(),
+  TELEGRAM_COMMAND_BOT_ENABLED: z.enum(["true", "false"]).default("false"),
+  DISCORD_WEBHOOK_URL: z.string().trim().url().optional(),
+  // Discord Bot 配置（用于 slash commands / 交互式 bot）
+  DISCORD_BOT_ENABLED: z.enum(["true", "false"]).default("false"),
+  DISCORD_BOT_TOKEN: z.string().trim().optional(),
+  DISCORD_APPLICATION_ID: z.string().trim().optional(),
+  DISCORD_GUILD_ID: z.string().trim().optional(),
   DATABASE_URL: z.string().trim().default("./stratum.db"),
   ACCOUNT_SIZE: z.coerce.number().positive().default(10000),
   RISK_PER_TRADE: z.coerce.number().positive().max(0.05).default(0.01),
@@ -19,7 +26,11 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 });
 
-export type Env = z.infer<typeof EnvSchema>;
+type EnvInput = z.infer<typeof EnvSchema>;
+export type Env = Omit<EnvInput, "DISCORD_BOT_ENABLED" | "TELEGRAM_COMMAND_BOT_ENABLED"> & {
+  DISCORD_BOT_ENABLED: boolean;
+  TELEGRAM_COMMAND_BOT_ENABLED: boolean;
+};
 
 function loadEnv(): Env {
   const result = EnvSchema.safeParse(process.env);
@@ -28,7 +39,11 @@ function loadEnv(): Env {
     console.error(result.error.flatten().fieldErrors);
     process.exit(1);
   }
-  return result.data;
+  return {
+    ...result.data,
+    DISCORD_BOT_ENABLED: result.data.DISCORD_BOT_ENABLED === "true",
+    TELEGRAM_COMMAND_BOT_ENABLED: result.data.TELEGRAM_COMMAND_BOT_ENABLED === "true",
+  };
 }
 
 export const env = loadEnv();

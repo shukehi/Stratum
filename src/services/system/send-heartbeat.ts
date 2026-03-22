@@ -1,15 +1,16 @@
 import Database from "better-sqlite3";
 import type { LiquiditySession } from "../../domain/market/market-context.js";
-import type { TelegramConfig } from "../alerting/send-alert.js";
+import type { NotificationConfig } from "../alerting/send-notification.js";
 import { getOpenPositions } from "../positions/track-position.js";
 import { getOverallStats } from "../analytics/query-trade-report.js";
 import { logger } from "../../app/logger.js";
+import { hasNotificationChannel, sendTextNotification } from "../alerting/send-notification.js";
 
 /**
  * 系统心跳通知  (PHASE_13)
  *
  * 职责：
- *   定期向 Telegram 推送系统运行状态摘要，让用户确认系统未崩溃。
+ *   定期向通知通道推送系统运行状态摘要，让用户确认系统未崩溃。
  *   同时在终端打印相同摘要。
  *
  * 内容：
@@ -39,11 +40,11 @@ export type HeartbeatOptions = {
 
 /**
  * 发送一次心跳。
- * 同时打印终端日志 + 推送 Telegram（telegramConfig 有效时）。
+ * 同时打印终端日志 + 推送通知（notificationConfig 有效时）。
  */
 export async function sendHeartbeat(
   db: Database.Database,
-  telegramConfig: TelegramConfig,
+  notificationConfig: NotificationConfig,
   opts: HeartbeatOptions
 ): Promise<void> {
   const now = Date.now();
@@ -83,8 +84,8 @@ export async function sendHeartbeat(
     "💓 Heartbeat"
   );
 
-  // ── Telegram 推送 ──────────────────────────────────────────────────────────
-  if (!telegramConfig.botToken || !telegramConfig.chatId) return;
+  // ── 通知推送 ────────────────────────────────────────────────────────────────
+  if (!hasNotificationChannel(notificationConfig)) return;
 
   const text = formatHeartbeatMessage({
     version: opts.version,
@@ -103,9 +104,12 @@ export async function sendHeartbeat(
     totalRStr,
   });
 
-  await sendTelegramText(text, telegramConfig).catch((err) => {
-    logger.warn({ err }, "Heartbeat: Telegram 推送失败");
+  const result = await sendTextNotification(text, notificationConfig, fetch, {
+    telegramParseMode: "Markdown",
   });
+  if (!result.anyDelivered) {
+    logger.warn({ channels: result }, "Heartbeat: 通知推送失败");
+  }
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────
@@ -174,16 +178,4 @@ function formatBeijingTime(ms: number): string {
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
   const date = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
   return `${date} ${hh}:${mm}`;
-}
-
-async function sendTelegramText(text: string, config: TelegramConfig): Promise<void> {
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: config.chatId, text, parse_mode: "Markdown" }),
-  });
-  if (!res.ok) {
-    throw new Error(`Telegram API ${res.status}: ${await res.text()}`);
-  }
 }

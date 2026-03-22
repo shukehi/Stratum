@@ -61,6 +61,12 @@ LOG_LEVEL=info
 - `LLM_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
+- `TELEGRAM_COMMAND_BOT_ENABLED`
+- `DISCORD_WEBHOOK_URL`
+- `DISCORD_BOT_ENABLED`
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_APPLICATION_ID`
+- `DISCORD_GUILD_ID`
 
 ### 4. 手动测试
 
@@ -259,6 +265,12 @@ pnpm cli help
 | `SPOT_SYMBOL` | 现货品种 | `BTC/USDT` |
 | `TELEGRAM_BOT_TOKEN` | Telegram Bot Token | — |
 | `TELEGRAM_CHAT_ID` | Telegram Chat ID | — |
+| `TELEGRAM_COMMAND_BOT_ENABLED` | 是否启用 Telegram 命令机器人（true/false） | `false` |
+| `DISCORD_WEBHOOK_URL` | Discord Incoming Webhook | — |
+| `DISCORD_BOT_ENABLED` | 是否启用 Discord Bot 交互（true/false） | `false` |
+| `DISCORD_BOT_TOKEN` | Discord Bot Token（交互模式） | — |
+| `DISCORD_APPLICATION_ID` | Discord Application ID（交互模式） | — |
+| `DISCORD_GUILD_ID` | Discord Server/Guild ID（交互模式） | — |
 | `LLM_API_KEY` | LLM API Key | — |
 | `LLM_PROVIDER` | `anthropic` 或 `openrouter` | `anthropic` |
 | `LLM_MODEL` | 模型名称（如 `google/gemini-flash-1.5`） | provider 默认值 |
@@ -271,7 +283,7 @@ pnpm cli help
 
 ---
 
-## Telegram 通知触发条件
+## 通知触发条件
 
 | 事件 | 触发时机 |
 |------|---------|
@@ -280,6 +292,33 @@ pnpm cli help
 | 🛑 止损平仓 | 模拟仓位价格触及止损价（每 30s 检查） |
 | 🌏 时段切换 | 亚洲盘/欧洲盘/伦纽重叠/美盘 开启时（北京 06/14/16/00 点） |
 | 💓 心跳通知 | 每 N 小时推送系统状态摘要（默认 6h） |
+
+---
+
+## Discord Bot 命令（交互模式）
+
+当 `DISCORD_BOT_ENABLED=true` 且 Bot 变量完整时，支持以下 slash commands：
+
+| 命令 | 说明 |
+|------|------|
+| `/status` | 查看系统运行状态（版本、运行时长、时段、最近扫描时间） |
+| `/positions` | 查看当前 open 模拟仓位 |
+| `/price [symbol] [market]` | 查看最新价；`market` 支持 `perp`(默认)/`spot`，`symbol` 可用 `BTC`、`BTCUSDT`、`BTC/USDT` |
+
+---
+
+## Telegram Bot 命令（交互模式）
+
+当 `TELEGRAM_COMMAND_BOT_ENABLED=true` 且 `TELEGRAM_BOT_TOKEN` 存在时，支持：
+
+| 命令 | 说明 |
+|------|------|
+| `/help` | 查看可用命令与示例 |
+| `/status` | 查看系统运行状态（版本、运行时长、时段、最近扫描时间） |
+| `/positions` | 查看当前 open 模拟仓位 |
+| `/price [symbol] [market]` | 查看最新价，示例：`/price BTC spot`、`/price ETHUSDT perp` |
+
+若同时设置了 `TELEGRAM_CHAT_ID`，命令处理会只响应该 chat id。
 
 ---
 

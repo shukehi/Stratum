@@ -126,7 +126,7 @@ describe("monitorPositions — long TP", () => {
       db,
       client,
       "BTC/USDT:USDT",
-      { botToken: "token", chatId: "chat-id" }
+      { telegram: { botToken: "token", chatId: "chat-id" } }
     );
 
     expect(result.closed).toBe(1);

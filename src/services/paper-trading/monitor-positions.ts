@@ -1,9 +1,13 @@
 import Database from "better-sqlite3";
 import type { ExchangeClient } from "../../clients/exchange/ccxt-client.js";
 import type { OpenPosition } from "../../domain/position/open-position.js";
-import type { TelegramConfig } from "../alerting/send-alert.js";
 import { getOpenPositions, closePosition } from "../positions/track-position.js";
 import { logger } from "../../app/logger.js";
+import {
+  hasNotificationChannel,
+  sendTextNotification,
+  type NotificationConfig,
+} from "../alerting/send-notification.js";
 
 /**
  * 模拟交易仓位监控器  (PHASE_11)
@@ -52,14 +56,14 @@ export type UnrealizedPosition = {
  * @param db             SQLite 数据库实例
  * @param client         交易所客户端（用于获取实时价格）
  * @param symbol         合约品种（如 "BTC/USDT:USDT"）
- * @param telegramConfig Telegram 配置（平仓时发送通知）
+ * @param notificationConfig 通知配置（平仓时发送通知）
  * @param closedAt       平仓时间戳（测试时注入，生产环境用 Date.now()）
  */
 export async function monitorPositions(
   db: Database.Database,
   client: ExchangeClient,
   symbol: string,
-  telegramConfig?: TelegramConfig,
+  notificationConfig?: NotificationConfig,
   closedAt: number = Date.now()
 ): Promise<MonitorResult> {
   const openPositions = getOpenPositions(db);
@@ -114,12 +118,15 @@ export async function monitorPositions(
       "模拟交易：仓位已平仓"
     );
 
-    // 发送 Telegram 通知
-    if (telegramConfig?.botToken && telegramConfig?.chatId) {
+    // 发送通知
+    if (hasNotificationChannel(notificationConfig)) {
       const message = formatCloseMessage(record);
-      await sendTelegramText(message, telegramConfig).catch((err) =>
-        logger.warn({ err }, "平仓 Telegram 通知发送失败")
-      );
+      const result = await sendTextNotification(message, notificationConfig!, fetch, {
+        telegramParseMode: "Markdown",
+      });
+      if (!result.anyDelivered) {
+        logger.warn({ channels: result }, "平仓通知发送失败");
+      }
     }
   }
 
@@ -204,19 +211,6 @@ function formatCloseMessage(record: ClosedPositionRecord): string {
     `盈亏：${pnlSign}${pnlR.toFixed(2)}R\n` +
     `持仓时长：${formatDuration(pos.openedAt, Date.now())}`
   );
-}
-
-async function sendTelegramText(text: string, config: TelegramConfig): Promise<void> {
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: config.chatId, text, parse_mode: "Markdown" }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Telegram HTTP ${res.status}: ${body || res.statusText}`);
-  }
 }
 
 function formatDuration(openedAt: number, now: number): string {

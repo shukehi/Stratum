@@ -185,7 +185,7 @@ function makeDeps(overrides: Partial<ScanDeps> = {}): ScanDeps & { db: Database.
     client: makeClient(),
     llmCall: vi.fn().mockResolvedValue("{}") as ScanDeps["llmCall"],
     httpFetch: vi.fn().mockResolvedValue({ ok: true, status: 200 }) as unknown as typeof fetch,
-    telegramConfig: { botToken: "test-token", chatId: "-100123456" },
+    notificationConfig: { telegram: { botToken: "test-token", chatId: "-100123456" } },
     newsApiKey: "",
     fetchNewsFn: vi.fn().mockResolvedValue([]) as ScanDeps["fetchNewsFn"],
   };

@@ -17,6 +17,7 @@ import { monitorSession } from "../../../src/services/session/monitor-session.js
 const mockedGetCurrentSession = vi.mocked(getCurrentSession);
 
 const telegramConfig = { botToken: "test-token", chatId: "test-chat" };
+const notificationConfig = { telegram: telegramConfig };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -29,7 +30,7 @@ describe("monitorSession — 首次初始化", () => {
   it("lastSession=null 时返回当前时段，不发送 Telegram", async () => {
     mockedGetCurrentSession.mockReturnValue("london_ny_overlap");
 
-    const result = await monitorSession(null, telegramConfig);
+    const result = await monitorSession(null, notificationConfig);
 
     expect(result).toBe("london_ny_overlap");
     expect(mockFetch).not.toHaveBeenCalled();
@@ -48,7 +49,7 @@ describe("monitorSession — 时段未变化", () => {
   it("时段相同时不发送 Telegram，返回相同时段", async () => {
     mockedGetCurrentSession.mockReturnValue("ny_close");
 
-    const result = await monitorSession("ny_close", telegramConfig);
+    const result = await monitorSession("ny_close", notificationConfig);
 
     expect(result).toBe("ny_close");
     expect(mockFetch).not.toHaveBeenCalled();
@@ -69,7 +70,7 @@ describe("monitorSession — 时段切换", () => {
     it(`${from} → ${to} 时发送 Telegram 并返回新时段`, async () => {
       mockedGetCurrentSession.mockReturnValue(to);
 
-      const result = await monitorSession(from, telegramConfig);
+      const result = await monitorSession(from, notificationConfig);
 
       expect(result).toBe(to);
       expect(mockFetch).toHaveBeenCalledOnce();
@@ -91,7 +92,7 @@ describe("monitorSession — 时段切换", () => {
     mockedGetCurrentSession.mockReturnValue("london_ramp");
     mockFetch.mockResolvedValue({ ok: false, text: async () => "Bad Request" });
 
-    const result = await monitorSession("asian_low", telegramConfig);
+    const result = await monitorSession("asian_low", notificationConfig);
 
     expect(result).toBe("london_ramp");
     // 不抛出异常
@@ -113,7 +114,7 @@ describe("monitorSession — Telegram 消息内容校验", () => {
   it("london_ny_overlap 开启消息包含正确的 UTC 和北京时间", async () => {
     mockedGetCurrentSession.mockReturnValue("london_ny_overlap");
 
-    await monitorSession("london_ramp", telegramConfig);
+    await monitorSession("london_ramp", notificationConfig);
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.text).toContain("08:00");   // UTC 开盘
@@ -125,7 +126,7 @@ describe("monitorSession — Telegram 消息内容校验", () => {
   it("asian_low 开启消息包含折扣警告", async () => {
     mockedGetCurrentSession.mockReturnValue("asian_low");
 
-    await monitorSession("ny_close", telegramConfig);
+    await monitorSession("ny_close", notificationConfig);
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.text).toContain("亚洲盘");

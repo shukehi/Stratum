@@ -3,7 +3,7 @@ import { sendAlert } from "../../../src/services/alerting/send-alert.js";
 import type { AlertPayload } from "../../../src/domain/signal/alert-payload.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 import type { MarketContext } from "../../../src/domain/market/market-context.js";
-import type { TelegramConfig } from "../../../src/services/alerting/send-alert.js";
+import type { NotificationConfig } from "../../../src/services/alerting/send-alert.js";
 
 // ── テスト夹具 ────────────────────────────────────────────────────────────────
 
@@ -41,9 +41,11 @@ function makePayload(): AlertPayload {
   return { candidate, marketContext, alertStatus: "pending", createdAt: Date.now() };
 }
 
-const validConfig: TelegramConfig = {
-  botToken: "test-bot-token",
-  chatId: "-100123456",
+const validConfig: NotificationConfig = {
+  telegram: {
+    botToken: "test-bot-token",
+    chatId: "-100123456",
+  },
 };
 
 function mockFetch(ok: boolean, status = 200): typeof fetch {
@@ -126,15 +128,42 @@ describe("sendAlert — 失敗", () => {
 describe("sendAlert — 空の設定", () => {
   it("botToken が空文字 → fetch を呼ばず false", async () => {
     const fetchMock = mockFetch(true);
-    const result = await sendAlert(makePayload(), { botToken: "", chatId: "-100" }, fetchMock);
+    const result = await sendAlert(makePayload(), { telegram: { botToken: "", chatId: "-100" } }, fetchMock);
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("chatId が空文字 → fetch を呼ばず false", async () => {
     const fetchMock = mockFetch(true);
-    const result = await sendAlert(makePayload(), { botToken: "token", chatId: "" }, fetchMock);
+    const result = await sendAlert(makePayload(), { telegram: { botToken: "token", chatId: "" } }, fetchMock);
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("仅配置 Discord 时也会发送", async () => {
+    const fetchMock = mockFetch(true);
+    const result = await sendAlert(
+      makePayload(),
+      { discord: { webhookUrl: "https://discord.com/api/webhooks/1/abc" } },
+      fetchMock
+    );
+    expect(result).toBe(true);
+    const [url, options] = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("https://discord.com/api/webhooks/1/abc");
+    expect(JSON.parse((options as RequestInit).body as string)).toHaveProperty("content");
+  });
+
+  it("同时配置 Telegram + Discord 时双发", async () => {
+    const fetchMock = mockFetch(true);
+    const result = await sendAlert(
+      makePayload(),
+      {
+        telegram: { botToken: "test-bot-token", chatId: "-100123456" },
+        discord: { webhookUrl: "https://discord.com/api/webhooks/1/abc" },
+      },
+      fetchMock
+    );
+    expect(result).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

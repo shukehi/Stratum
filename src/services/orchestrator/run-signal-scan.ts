@@ -1,6 +1,7 @@
 import type { ExchangeClient } from "../../clients/exchange/ccxt-client.js";
 import type { LlmCallFn } from "../macro/assess-macro-overlay.js";
-import type { HttpFetchFn, TelegramConfig } from "../alerting/send-alert.js";
+import type { HttpFetchFn } from "../alerting/send-alert.js";
+import type { NotificationConfig } from "../alerting/send-notification.js";
 import type { NewsItem } from "../../domain/news/news-item.js";
 import type { Candle } from "../../domain/market/candle.js";
 import type { AlertPayload } from "../../domain/signal/alert-payload.js";
@@ -59,13 +60,13 @@ import { evaluateExposureGate } from "../risk/evaluate-exposure-gate.js";
  *   PHASE_06  analyzeConsensus          → TradeCandidate[]
  *   PHASE_07  assessMacroOverlay        → MacroOverlayDecision
  *             applyMacroOverlay         → 过滤后的 TradeCandidate[]
- *   PHASE_08  saveCandidate + sendAlert → 数据库落盘 + Telegram 推送
+ *   PHASE_08  saveCandidate + sendAlert → 数据库落盘 + 通知推送
  *
  * 错误隔离策略：
  *   - 交易所主数据获取失败：直接抛错，流程终止；
  *   - 新闻获取失败：降级为空数组并继续；
  *   - 宏观评估失败：让候选直接通过并继续；
- *   - Telegram 发送失败：保留 failed 状态并记录错误。
+ *   - 通知发送失败：保留 failed 状态并记录错误。
  *
  * 去重策略：
  *   在发出告警前查询历史候选，若同一信号已成功发送，则本轮跳过；
@@ -81,10 +82,10 @@ export type ScanDeps = {
   db: Database.Database;
   /** LLM 调用函数，测试中通常注入 mock。 */
   llmCall: LlmCallFn;
-  /** Telegram 发送所用的 fetch，未传入时退回全局实现。 */
+  /** 通知发送所用的 fetch，未传入时退回全局实现。 */
   httpFetch?: HttpFetchFn;
-  /** Telegram Bot 配置。 */
-  telegramConfig: TelegramConfig;
+  /** 通知通道配置。 */
+  notificationConfig: NotificationConfig;
   /** NewsAPI 密钥；为空时跳过新闻抓取。 */
   newsApiKey?: string;
   /** 新闻获取函数，便于测试时替换。 */
@@ -136,7 +137,7 @@ export async function runSignalScan(
     db,
     llmCall,
     httpFetch,
-    telegramConfig,
+    notificationConfig,
     newsApiKey = "",
     fetchNewsFn = defaultFetchNews,
   } = deps;
@@ -557,8 +558,8 @@ export async function runSignalScan(
     );
     markCandidateSnapshotDeliveryStarted(db, snapshotCandidateId, scannedAt);
 
-    // 发送 Telegram 告警（异步 IO，不能在事务内）
-    const ok = await sendAlert(payload, telegramConfig, httpFetch, {
+    // 发送通知告警（异步 IO，不能在事务内）
+    const ok = await sendAlert(payload, notificationConfig, httpFetch, {
       positionSizing,
     });
     const finalStatus = ok ? "sent" : "failed";
