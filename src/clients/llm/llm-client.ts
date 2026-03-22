@@ -13,7 +13,7 @@ import { logger } from "../../app/logger.js";
  *   LLM_PROVIDER  - "anthropic" | "openrouter"（默认: anthropic）
  *   LLM_MODEL     - 模型名称（可选，不填则使用 provider 默认值）
  *
- * OpenRouter 默认模型: google/gemini-flash-1.5
+ * OpenRouter 默认模型: google/gemini-2.0-flash-001
  * Anthropic  默认模型: claude-3-haiku-20240307
  */
 
@@ -21,7 +21,7 @@ import { logger } from "../../app/logger.js";
 
 const DEFAULT_MODELS: Record<string, string> = {
   anthropic: "claude-3-haiku-20240307",
-  openrouter: "google/gemini-flash-1.5",
+  openrouter: "google/gemini-2.0-flash-001",
 };
 
 // ── Anthropic Messages API ────────────────────────────────────────────────────

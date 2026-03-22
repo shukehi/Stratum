@@ -5,7 +5,9 @@ describe("strategyConfig", () => {
   it("minimumRiskReward is 2.5 (derived from 30-35% win rate assumption)", () => {
     expect(strategyConfig.minimumRiskReward).toBe(2.5);
     expect(strategyConfig.riskPerTrade).toBe(0.01);
-    expect(strategyConfig.accountSizeUsd).toBe(10000);
+    const expectedAccountSize =
+      process.env.ACCOUNT_SIZE !== undefined ? Number(process.env.ACCOUNT_SIZE) : 10000;
+    expect(strategyConfig.accountSizeUsd).toBe(expectedAccountSize);
   });
 
   it("has correct participant pressure thresholds", () => {

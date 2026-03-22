@@ -1,17 +1,17 @@
 import { z } from "zod";
 
 const EnvSchema = z.object({
-  EXCHANGE_NAME: z.string().default("binanceusdm"),
-  SYMBOL: z.string().default("BTC/USDT:USDT"),
-  SPOT_SYMBOL: z.string().default("BTC/USDT"),
-  NEWS_API_KEY: z.string().optional(),
+  EXCHANGE_NAME: z.string().trim().default("binanceusdm"),
+  SYMBOL: z.string().trim().default("BTC/USDT:USDT"),
+  SPOT_SYMBOL: z.string().trim().default("BTC/USDT"),
+  NEWS_API_KEY: z.string().trim().optional(),
   // LLM 配置
-  LLM_API_KEY: z.string().optional(),
+  LLM_API_KEY: z.string().trim().optional(),
   LLM_PROVIDER: z.enum(["anthropic", "openrouter"]).default("anthropic"),
-  LLM_MODEL: z.string().optional(), // 不填则按 provider 使用默认模型
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_CHAT_ID: z.string().optional(),
-  DATABASE_URL: z.string().default("./stratum.db"),
+  LLM_MODEL: z.string().trim().optional(), // 不填则按 provider 使用默认模型
+  TELEGRAM_BOT_TOKEN: z.string().trim().optional(),
+  TELEGRAM_CHAT_ID: z.string().trim().optional(),
+  DATABASE_URL: z.string().trim().default("./stratum.db"),
   ACCOUNT_SIZE: z.coerce.number().positive().default(10000),
   RISK_PER_TRADE: z.coerce.number().positive().max(0.05).default(0.01),
   HEARTBEAT_INTERVAL_H: z.coerce.number().positive().default(6), // 心跳间隔（小时），默认 6h

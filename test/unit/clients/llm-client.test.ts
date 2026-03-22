@@ -159,7 +159,7 @@ describe("createLlmClient — openrouter", () => {
     expect(infoSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "openrouter",
-        model: "google/gemini-flash-1.5",
+        model: "google/gemini-2.0-flash-001",
         responseChars: "中性，可以开仓".length,
       }),
       "LLM request succeeded"
@@ -183,7 +183,7 @@ describe("createLlmClient — openrouter", () => {
     expect(body.model).toBe("anthropic/claude-3.5-sonnet");
   });
 
-  it("model 未指定时使用默认值 google/gemini-flash-1.5", async () => {
+  it("model 未指定时使用默认值 google/gemini-2.0-flash-001", async () => {
     const mockFetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
       json: async () => ({ choices: [{ message: { content: "ok" } }] }),
@@ -193,7 +193,7 @@ describe("createLlmClient — openrouter", () => {
     await llmCall(MOCK_PROMPT);
 
     const body = JSON.parse((mockFetch.mock.calls[0][1]?.body as string) ?? "{}");
-    expect(body.model).toBe("google/gemini-flash-1.5");
+    expect(body.model).toBe("google/gemini-2.0-flash-001");
   });
 
   it("请求体使用 OpenAI chat completions 格式", async () => {
