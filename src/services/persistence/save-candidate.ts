@@ -3,6 +3,7 @@ import type { AlertPayload } from "../../domain/signal/alert-payload.js";
 import type { DailyBias } from "../../domain/market/daily-bias.js";
 import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import type { PositionSizingSummary } from "../../domain/signal/position-sizing.js";
+import { buildSignalId } from "../../utils/signal-id.js";
 
 export type CandidatePersistenceMeta = {
   macroAction?: "pass" | "downgrade" | "block" | "error";
@@ -12,6 +13,8 @@ export type CandidatePersistenceMeta = {
   positionSizing?: PositionSizingSummary;
   executionOutcome?: SnapshotExecutionOutcome;
   executionReasonCode?: string;
+  deliveryStartedAt?: number;
+  deliveryCompletedAt?: number;
 };
 
 export type SnapshotExecutionOutcome =
@@ -62,6 +65,7 @@ export function saveCandidate(
       same_direction_exposure_count, same_direction_exposure_risk_percent,
       projected_same_direction_risk_percent, portfolio_open_risk_percent,
       projected_portfolio_risk_percent,
+      delivery_started_at, delivery_completed_at,
       macro_action, confirmation_status, daily_bias, order_flow_bias,
       regime, regime_confidence, market_driver_type,
       participant_bias, participant_pressure_type, participant_confidence,
@@ -75,6 +79,7 @@ export function saveCandidate(
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?,
+      ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?,
@@ -97,6 +102,8 @@ export function saveCandidate(
     meta.positionSizing?.projectedSameDirectionRiskPercent ?? null,
     meta.positionSizing?.portfolioOpenRiskPercent ?? null,
     meta.positionSizing?.projectedPortfolioRiskPercent ?? null,
+    meta.deliveryStartedAt ?? null,
+    meta.deliveryCompletedAt ?? null,
     meta.macroAction ?? null,
     meta.confirmationStatus ?? null,
     meta.dailyBias ?? null,
@@ -138,6 +145,7 @@ export function saveCandidateSnapshot(
       same_direction_exposure_count, same_direction_exposure_risk_percent,
       projected_same_direction_risk_percent, portfolio_open_risk_percent,
       projected_portfolio_risk_percent,
+      delivery_started_at, delivery_completed_at,
       daily_bias, order_flow_bias,
       regime, regime_confidence, market_driver_type,
       participant_bias, participant_pressure_type, participant_confidence,
@@ -151,6 +159,7 @@ export function saveCandidateSnapshot(
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?,
+      ?, ?,
       ?, ?,
       ?, ?, ?,
       ?, ?, ?,
@@ -186,6 +195,8 @@ export function saveCandidateSnapshot(
     meta.positionSizing?.projectedSameDirectionRiskPercent ?? null,
     meta.positionSizing?.portfolioOpenRiskPercent ?? null,
     meta.positionSizing?.projectedPortfolioRiskPercent ?? null,
+    meta.deliveryStartedAt ?? null,
+    meta.deliveryCompletedAt ?? null,
     meta.dailyBias ?? null,
     meta.orderFlowBias ?? null,
     marketContext.regime,
@@ -213,11 +224,36 @@ export function updateAlertStatus(
   direction: "long" | "short",
   timeframe: "4h" | "1h",
   entryHigh: number,
-  status: AlertPayload["alertStatus"]
+  status: AlertPayload["alertStatus"],
+  options: {
+    deliveryCompletedAt?: number;
+  } = {}
 ): void {
   const id = buildId(symbol, direction, timeframe, entryHigh);
-  db.prepare("UPDATE candidates SET alert_status = ?, updated_at = ? WHERE id = ?")
-    .run(status, Date.now(), id);
+  db.prepare(`
+    UPDATE candidates
+    SET
+      alert_status = ?,
+      delivery_completed_at = COALESCE(?, delivery_completed_at),
+      updated_at = ?
+    WHERE id = ?
+  `).run(status, options.deliveryCompletedAt ?? null, Date.now(), id);
+}
+
+export function markCandidateDeliveryStarted(
+  db: Database.Database,
+  symbol: string,
+  direction: "long" | "short",
+  timeframe: "4h" | "1h",
+  entryHigh: number,
+  startedAt: number
+): void {
+  const id = buildId(symbol, direction, timeframe, entryHigh);
+  db.prepare(`
+    UPDATE candidates
+    SET delivery_started_at = ?, updated_at = ?
+    WHERE id = ?
+  `).run(startedAt, Date.now(), id);
 }
 
 export function updateCandidateSnapshotOutcome(
@@ -227,6 +263,7 @@ export function updateCandidateSnapshotOutcome(
   options: {
     alertStatus?: SnapshotAlertStatus;
     executionReasonCode?: string;
+    deliveryCompletedAt?: number;
   } = {}
 ): void {
   // 快照保留每一次执行尝试的结果，方便复盘“为什么没有实际发出告警”。
@@ -235,14 +272,28 @@ export function updateCandidateSnapshotOutcome(
     SET
       execution_outcome = ?,
       execution_reason_code = ?,
-      alert_status = COALESCE(?, alert_status)
+      alert_status = COALESCE(?, alert_status),
+      delivery_completed_at = COALESCE(?, delivery_completed_at)
     WHERE candidate_id = ?
   `).run(
     outcome,
     options.executionReasonCode ?? null,
     options.alertStatus ?? snapshotAlertStatusForOutcome(outcome),
+    options.deliveryCompletedAt ?? null,
     candidateId
   );
+}
+
+export function markCandidateSnapshotDeliveryStarted(
+  db: Database.Database,
+  candidateId: string,
+  startedAt: number
+): void {
+  db.prepare(`
+    UPDATE candidate_snapshots
+    SET delivery_started_at = ?
+    WHERE candidate_id = ?
+  `).run(startedAt, candidateId);
 }
 
 export type CandidateSnapshotRow = {
@@ -262,6 +313,8 @@ export type CandidateSnapshotRow = {
   orderFlowBias: string | null;
   basisDivergence: boolean;
   liquiditySession: string | null;
+  deliveryStartedAt: number | null;
+  deliveryCompletedAt: number | null;
   executionOutcome: SnapshotExecutionOutcome | null;
   executionReasonCode: string | null;
   createdAt: number;
@@ -289,6 +342,8 @@ export function loadCandidateSnapshots(
       order_flow_bias AS orderFlowBias,
       basis_divergence AS basisDivergence,
       liquidity_session AS liquiditySession,
+      delivery_started_at AS deliveryStartedAt,
+      delivery_completed_at AS deliveryCompletedAt,
       execution_outcome AS executionOutcome,
       execution_reason_code AS executionReasonCode,
       created_at AS createdAt
@@ -312,6 +367,8 @@ export function loadCandidateSnapshots(
     orderFlowBias: string | null;
     basisDivergence: number;
     liquiditySession: string | null;
+    deliveryStartedAt: number | null;
+    deliveryCompletedAt: number | null;
     executionOutcome: SnapshotExecutionOutcome | null;
     executionReasonCode: string | null;
     createdAt: number;
@@ -339,7 +396,7 @@ export function buildId(
   timeframe: string,
   entryHigh: number
 ): string {
-  return `${symbol}_${direction}_${timeframe}_${Math.floor(entryHigh)}`;
+  return buildSignalId(symbol, direction, timeframe, entryHigh);
 }
 
 export function buildSnapshotCandidateId(

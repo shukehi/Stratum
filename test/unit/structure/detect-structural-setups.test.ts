@@ -112,6 +112,34 @@ function makeInvalidSweepCandles4h(): Candle[] {
   return [...bg, ...preSwing, swingLow, ...postSwing, ...mid, invalidSweep];
 }
 
+/** 同一根扫描 K 线同时刺破两个 swing low，只应输出一个代表性 setup */
+function makeMultiSweepSameCandle4h(): Candle[] {
+  const bg = Array.from({ length: 16 }, (_, i) =>
+    makeCandle(i, 60000, 60300, 59700, 60100)
+  );
+  const swingAContext = [
+    makeCandle(16, 59300, 59500, 59200, 59400),
+    makeCandle(17, 59200, 59400, 59100, 59300),
+    makeCandle(18, 59100, 59300, 59000, 59200), // swing low A = 59000
+    makeCandle(19, 59250, 59450, 59150, 59350),
+    makeCandle(20, 59350, 59550, 59250, 59450),
+    makeCandle(21, 59450, 59650, 59350, 59550),
+    makeCandle(22, 59150, 59400, 59050, 59250),
+    makeCandle(23, 59080, 59300, 58950, 59180), // swing low B = 58950
+    makeCandle(24, 59200, 59400, 59100, 59300),
+    makeCandle(25, 59300, 59500, 59200, 59400),
+    makeCandle(26, 59400, 59600, 59300, 59500),
+  ];
+  const recent = [
+    makeCandle(27, 60000, 60300, 59700, 60100),
+    makeCandle(28, 60000, 60300, 59700, 60100),
+    makeCandle(29, 60000, 60300, 59700, 60100),
+    makeCandle(30, 60000, 60300, 59700, 60100),
+    makeCandle(31, 59200, 59400, 58800, 59150), // 同时刺破 59000 / 58950，并收回到其上方
+  ];
+  return [...bg, ...swingAContext, ...recent];
+}
+
 // ── 早退：真空期 / 低置信度 ──────────────────────────────────────────────────
 
 describe("detectStructuralSetups — 早退条件", () => {
@@ -178,6 +206,12 @@ describe("detectLiquiditySweep — 有效/无效扫描", () => {
     const results = detectLiquiditySweep(candles, strategyConfig);
     // 无效扫描不应生成任何 setup
     expect(results.filter(r => r.direction === "long")).toHaveLength(0);
+  });
+
+  it("同一根扫描 K 线刺破多个 swing low 时，只返回一个代表性看涨 setup", () => {
+    const candles = makeMultiSweepSameCandle4h();
+    const results = detectLiquiditySweep(candles, strategyConfig);
+    expect(results.filter((setup) => setup.direction === "long")).toHaveLength(1);
   });
 });
 

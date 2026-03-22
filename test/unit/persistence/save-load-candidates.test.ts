@@ -6,6 +6,8 @@ import {
   saveCandidateSnapshot,
   loadCandidateSnapshots,
   countCandidateSnapshotsByStatus,
+  markCandidateDeliveryStarted,
+  markCandidateSnapshotDeliveryStarted,
   updateCandidateSnapshotOutcome,
   updateAlertStatus,
   buildId,
@@ -86,12 +88,22 @@ describe("initDb", () => {
 // ── buildId ───────────────────────────────────────────────────────────────────
 
 describe("buildId", () => {
-  it("symbol_direction_timeframe_floor(entryHigh) の形式", () => {
-    expect(buildId("BTCUSDT", "long", "4h", 60000.99)).toBe("BTCUSDT_long_4h_60000");
+  it("保留 entryHigh 的 8 位小数精度", () => {
+    expect(buildId("BTCUSDT", "long", "4h", 60000.99)).toBe(
+      "BTCUSDT_long_4h_60000.99000000"
+    );
   });
 
-  it("entryHigh が整数の場合そのまま", () => {
-    expect(buildId("ETHUSDT", "short", "1h", 3000)).toBe("ETHUSDT_short_1h_3000");
+  it("整数价格会标准化为固定 8 位小数", () => {
+    expect(buildId("ETHUSDT", "short", "1h", 3000)).toBe(
+      "ETHUSDT_short_1h_3000.00000000"
+    );
+  });
+
+  it("低价资产的不同价格区不会映射到同一个 ID", () => {
+    expect(buildId("DOGEUSDT", "long", "4h", 0.12)).not.toBe(
+      buildId("DOGEUSDT", "long", "4h", 0.98)
+    );
   });
 });
 
@@ -194,6 +206,24 @@ describe("saveCandidate — 基本保存", () => {
     expect(row.account_risk_percent).toBeCloseTo(0.01, 5);
     expect(row.same_direction_exposure_count).toBe(1);
   });
+
+  it("delivery_started_at / delivery_completed_at 会写入 candidates", () => {
+    const payload = makePayload();
+    saveCandidate(db, payload, {
+      deliveryStartedAt: 1_700_000_000_000,
+      deliveryCompletedAt: 1_700_000_000_999,
+    });
+
+    const row = db.prepare(`
+      SELECT delivery_started_at, delivery_completed_at
+      FROM candidates
+    `).get() as {
+      delivery_started_at: number | null;
+      delivery_completed_at: number | null;
+    };
+    expect(row.delivery_started_at).toBe(1_700_000_000_000);
+    expect(row.delivery_completed_at).toBe(1_700_000_000_999);
+  });
 });
 
 describe("candidate_snapshots", () => {
@@ -263,6 +293,26 @@ describe("candidate_snapshots", () => {
     expect(row.executionReasonCode).toBe("already_sent");
     expect(countCandidateSnapshotsByStatus(db, "skipped_duplicate")).toBe(1);
   });
+
+  it("snapshot 会记录发送开始和完成时间", () => {
+    const createdAt = Date.now();
+    const candidateId = saveCandidateSnapshot(
+      db,
+      { ...makePayload(), createdAt },
+      { executionOutcome: "pending" }
+    );
+
+    markCandidateSnapshotDeliveryStarted(db, candidateId, createdAt);
+    updateCandidateSnapshotOutcome(db, candidateId, "sent", {
+      alertStatus: "sent",
+      deliveryCompletedAt: createdAt + 1234,
+    });
+
+    const row = loadCandidateSnapshots(db, 1)[0];
+    expect(row.deliveryStartedAt).toBe(createdAt);
+    expect(row.deliveryCompletedAt).toBe(createdAt + 1234);
+    expect(row.executionOutcome).toBe("sent");
+  });
 });
 
 describe("saveCandidate — 重複上書き（INSERT OR REPLACE）", () => {
@@ -307,6 +357,27 @@ describe("updateAlertStatus", () => {
 
   it("存在しない ID → エラーにならない（0 行更新）", () => {
     expect(() => updateAlertStatus(db, "XYZUSDT", "long", "4h", 99999, "sent")).not.toThrow();
+  });
+
+  it("会记录发送开始和完成时间", () => {
+    const payload = makePayload();
+    saveCandidate(db, payload);
+    markCandidateDeliveryStarted(db, "BTCUSDT", "long", "4h", 60000, payload.createdAt);
+    updateAlertStatus(db, "BTCUSDT", "long", "4h", 60000, "sent", {
+      deliveryCompletedAt: payload.createdAt + 4321,
+    });
+
+    const row = db.prepare(`
+      SELECT alert_status, delivery_started_at, delivery_completed_at
+      FROM candidates
+    `).get() as {
+      alert_status: string;
+      delivery_started_at: number | null;
+      delivery_completed_at: number | null;
+    };
+    expect(row.alert_status).toBe("sent");
+    expect(row.delivery_started_at).toBe(payload.createdAt);
+    expect(row.delivery_completed_at).toBe(payload.createdAt + 4321);
   });
 });
 

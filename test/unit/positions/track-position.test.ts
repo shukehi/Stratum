@@ -12,7 +12,7 @@ import {
 } from "../../../src/services/positions/track-position.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 
-// ── テスト夾具 ────────────────────────────────────────────────────────────
+// ── 测试夹具 ────────────────────────────────────────────────────────────────
 
 function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate {
   return {
@@ -44,15 +44,21 @@ beforeEach(() => {
 // ── buildPositionId ──────────────────────────────────────────────────────
 
 describe("buildPositionId", () => {
-  it("symbol_direction_timeframe_floor(entryHigh) の形式", () => {
+  it("保留 entryHigh 的 8 位小数精度", () => {
     expect(buildPositionId("BTCUSDT", "long", "4h", 60000.99)).toBe(
-      "BTCUSDT_long_4h_60000"
+      "BTCUSDT_long_4h_60000.99000000"
     );
   });
 
-  it("entryHigh が整数の場合そのまま", () => {
+  it("整数价格会标准化为固定 8 位小数", () => {
     expect(buildPositionId("ETHUSDT", "short", "1h", 3000)).toBe(
-      "ETHUSDT_short_1h_3000"
+      "ETHUSDT_short_1h_3000.00000000"
+    );
+  });
+
+  it("低价资产不会因为取整而发生主键碰撞", () => {
+    expect(buildPositionId("DOGEUSDT", "long", "4h", 0.12345678)).not.toBe(
+      buildPositionId("DOGEUSDT", "long", "4h", 0.22345678)
     );
   });
 });

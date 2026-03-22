@@ -212,7 +212,11 @@ export async function generateFullChainBacktestSignals(
             config.vpValueAreaPercent,
           )
         : null;
-    const orderFlowResult = detectOrderFlowBias(slice4h);
+    const orderFlowResult = detectOrderFlowBias(
+      slice4h,
+      config.cvdWindow,
+      config.cvdNeutralThreshold
+    );
     const regimeDecision = detectMarketRegime(slice4h, config, {
       fundingRates: fundingSlice,
       openInterest: oiSlice,

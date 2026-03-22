@@ -55,6 +55,36 @@ function makeRangeCandles(n: number, midPrice = 60000): Candle[] {
   });
 }
 
+/** 大阴线幅度主导，但上涨次数更多，用于验证趋势评分按波幅而非计数 */
+function makeMagnitudeDominatedDownCandles(): Candle[] {
+  const candles: Candle[] = [];
+  let price = 60_000;
+  for (let i = 0; i < 13; i++) {
+    const isLast = i === 12;
+    if (!isLast) {
+      candles.push({
+        timestamp: BASE_TIME + i * INTERVAL,
+        open: price,
+        high: price + 60,
+        low: price - 20,
+        close: price + 40, // 多次小幅上涨
+        volume: 1_000,
+      });
+      price += 40;
+    } else {
+      candles.push({
+        timestamp: BASE_TIME + i * INTERVAL,
+        open: price,
+        high: price + 40,
+        low: price - 2_500,
+        close: price - 2_000, // 单次显著下跌，幅度远大于前面所有小涨
+        volume: 2_000,
+      });
+    }
+  }
+  return candles;
+}
+
 /** Generate N high-volatility candles (ATR >> baseline) */
 function makeHighVolatilityCandles(n: number): Candle[] {
   const normalCandles = Array.from({ length: 40 }, (_, i) => ({
@@ -189,6 +219,11 @@ describe("detectMarketRegime", () => {
       expect(Array.isArray(result.reasonCodes)).toBe(true);
       expect(typeof result.driverType).toBe("string");
       expect(result.reasons.length).toBeGreaterThan(0);
+    });
+
+    it("方向评分按波幅加权，不会被大量微弱上涨误判为上升趋势", () => {
+      const result = detectMarketRegime(makeMagnitudeDominatedDownCandles(), strategyConfig);
+      expect(result.reasons.some((reason) => reason.includes("上升"))).toBe(false);
     });
   });
 

@@ -17,6 +17,44 @@ export interface ExchangeClient {
   fetchSpotTicker(symbol: string): Promise<{ last: number }>;
 }
 
+type TickerLike = {
+  last?: unknown;
+};
+
+type FundingRateHistoryItem = {
+  timestamp?: unknown;
+  fundingRate?: unknown;
+};
+
+type OpenInterestHistoryItem = {
+  timestamp?: unknown;
+  openInterestAmount?: unknown;
+  openInterest?: unknown;
+};
+
+type ExchangeLike = {
+  fetchOHLCV(
+    symbol: string,
+    timeframe: string,
+    since: unknown,
+    limit: number
+  ): Promise<unknown[]>;
+  fetchFundingRateHistory(
+    symbol: string,
+    since: unknown,
+    limit: number
+  ): Promise<unknown[]>;
+  fetchOpenInterestHistory(
+    symbol: string,
+    timeframe: string,
+    since: unknown,
+    limit: number
+  ): Promise<unknown[]>;
+  fetchTicker(symbol: string): Promise<unknown>;
+};
+
+type ExchangeConstructor = new (options: { enableRateLimit: boolean }) => ExchangeLike;
+
 /**
  * 基于 ccxt 的交易所客户端实现。
  *
@@ -26,8 +64,8 @@ export interface ExchangeClient {
  *   3. 对部分非关键接口失败进行降级处理。
  */
 export class CcxtClient implements ExchangeClient {
-  private exchange: any;
-  private spotExchange: any;
+  private exchange: ExchangeLike | null;
+  private spotExchange: ExchangeLike | null;
   private exchangeName: string;
   private spotExchangeName: string;
   private spotSymbol: string;
@@ -42,10 +80,10 @@ export class CcxtClient implements ExchangeClient {
     this.spotExchange = null;
   }
 
-  private async getExchange(): Promise<any> {
+  private async getExchange(): Promise<ExchangeLike> {
     if (!this.exchange) {
       const ccxt = await import("ccxt");
-      const ExchangeClass = (ccxt as any)[this.exchangeName];
+      const ExchangeClass = getExchangeClass(ccxt, this.exchangeName);
       if (!ExchangeClass) {
         throw new Error(`Exchange not supported: ${this.exchangeName}`);
       }
@@ -54,10 +92,10 @@ export class CcxtClient implements ExchangeClient {
     return this.exchange;
   }
 
-  private async getSpotExchange(): Promise<any> {
+  private async getSpotExchange(): Promise<ExchangeLike> {
     if (!this.spotExchange) {
       const ccxt = await import("ccxt");
-      const ExchangeClass = (ccxt as any)[this.spotExchangeName];
+      const ExchangeClass = getExchangeClass(ccxt, this.spotExchangeName);
       if (!ExchangeClass) {
         throw new Error(`Spot exchange not supported: ${this.spotExchangeName}`);
       }
@@ -68,25 +106,23 @@ export class CcxtClient implements ExchangeClient {
 
   async fetchOHLCV(symbol: string, timeframe: string, limit: number): Promise<Candle[]> {
     const ex = await this.getExchange();
-    const raw: any[] = await ex.fetchOHLCV(symbol, timeframe, undefined, limit);
-    return raw.map((row: any[]) => ({
-      timestamp: Number(row[0]),
-      open: Number(row[1]),
-      high: Number(row[2]),
-      low: Number(row[3]),
-      close: Number(row[4]),
-      volume: Number(row[5]),
-    }));
+    const raw = await ex.fetchOHLCV(symbol, timeframe, undefined, limit);
+    // DEBT_01 修复：去掉最后一根 K 线（当前尚未收盘的 forming candle）。
+    // 所有下游分析（ATR、FVG、CVD、Regime）必须在已收盘的完整 K 线上运行。
+    return raw.slice(0, -1).map(mapOhlcvRow);
   }
 
   async fetchFundingRates(symbol: string, limit: number): Promise<FundingRatePoint[]> {
     const ex = await this.getExchange();
     try {
       const raw = await ex.fetchFundingRateHistory(symbol, undefined, limit);
-      return raw.map((item: any) => ({
-        timestamp: Number(item.timestamp),
-        fundingRate: Number(item.fundingRate),
-      }));
+      return raw.map((item) => {
+        const record = asObject(item) as FundingRateHistoryItem;
+        return {
+          timestamp: toNumber(record.timestamp),
+          fundingRate: toNumber(record.fundingRate),
+        };
+      });
     } catch (err) {
       logger.warn({ symbol, err }, "fetchFundingRates failed, returning empty");
       return [];
@@ -97,10 +133,13 @@ export class CcxtClient implements ExchangeClient {
     const ex = await this.getExchange();
     try {
       const raw = await ex.fetchOpenInterestHistory(symbol, "1h", undefined, limit);
-      return raw.map((item: any) => ({
-        timestamp: Number(item.timestamp),
-        openInterest: Number(item.openInterestAmount ?? item.openInterest ?? 0),
-      }));
+      return raw.map((item) => {
+        const record = asObject(item) as OpenInterestHistoryItem;
+        return {
+          timestamp: toNumber(record.timestamp),
+          openInterest: toNumber(record.openInterestAmount ?? record.openInterest ?? 0),
+        };
+      });
     } catch (err) {
       logger.warn({ symbol, err }, "fetchOpenInterest failed, returning empty");
       return [];
@@ -109,18 +148,46 @@ export class CcxtClient implements ExchangeClient {
 
   async fetchTicker(symbol: string): Promise<{ last: number }> {
     const ex = await this.getExchange();
-    const ticker = await ex.fetchTicker(symbol);
-    return { last: Number(ticker.last ?? 0) };
+    const ticker = asObject(await ex.fetchTicker(symbol)) as TickerLike;
+    return { last: toNumber(ticker.last) };
   }
 
   async fetchSpotTicker(symbol: string): Promise<{ last: number }> {
     try {
       const ex = await this.getSpotExchange();
-      const ticker = await ex.fetchTicker(symbol);
-      return { last: Number(ticker.last ?? 0) };
+      const ticker = asObject(await ex.fetchTicker(symbol)) as TickerLike;
+      return { last: toNumber(ticker.last) };
     } catch (err) {
       logger.warn({ symbol, err }, "fetchSpotTicker failed, returning default { last: 0 }");
       return { last: 0 };
     }
   }
+}
+
+function getExchangeClass(module: unknown, exchangeName: string): ExchangeConstructor | null {
+  if (!module || typeof module !== "object") return null;
+  const candidate = (module as Record<string, unknown>)[exchangeName];
+  return typeof candidate === "function" ? (candidate as ExchangeConstructor) : null;
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function toNumber(value: unknown): number {
+  return Number(value ?? 0);
+}
+
+function mapOhlcvRow(row: unknown): Candle {
+  if (!Array.isArray(row) || row.length < 6) {
+    throw new Error("Invalid OHLCV row from exchange");
+  }
+  return {
+    timestamp: toNumber(row[0]),
+    open: toNumber(row[1]),
+    high: toNumber(row[2]),
+    low: toNumber(row[3]),
+    close: toNumber(row[4]),
+    volume: toNumber(row[5]),
+  };
 }

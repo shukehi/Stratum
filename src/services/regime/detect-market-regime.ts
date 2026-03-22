@@ -82,14 +82,21 @@ export function detectMarketRegime(
 
   // ── 方向一致性 (Trend / Range 评分) ─────────────────────────
   const closes = recentCandles.map(c => c.close);
-  let ups = 0;
-  let downs = 0;
+  let upMagnitude = 0;
+  let downMagnitude = 0;
+  let signedMagnitude = 0;
   for (let i = 1; i < closes.length; i++) {
-    if (closes[i] > closes[i - 1]) ups++;
-    else if (closes[i] < closes[i - 1]) downs++;
+    const prev = closes[i - 1];
+    const current = closes[i];
+    if (prev <= 0) continue;
+    const move = percentChange(prev, current);
+    if (move > 0) upMagnitude += move;
+    else if (move < 0) downMagnitude += Math.abs(move);
+    signedMagnitude += move;
   }
-  const total = closes.length - 1;
-  const directionalBias = total > 0 ? Math.abs(ups - downs) / total : 0;
+  const totalMagnitude = upMagnitude + downMagnitude;
+  const directionalBias =
+    totalMagnitude > 0 ? Math.abs(signedMagnitude) / totalMagnitude : 0;
 
   let trendScore = directionalBias * 100;
   let rangeScore = (1 - directionalBias) * 100;
@@ -199,7 +206,7 @@ export function detectMarketRegime(
 
   // 4. 明确 winner
   if (winner === "trend") {
-    const direction = ups > downs ? "上升" : "下降";
+    const direction = signedMagnitude >= 0 ? "上升" : "下降";
     reasons.push(
       `趋势确认 (${direction}): 方向一致性 ${(directionalBias * 100).toFixed(0)}%` +
       (trendExhausted ? "，已施加衰竭惩罚" : "")

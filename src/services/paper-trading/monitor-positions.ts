@@ -208,11 +208,15 @@ function formatCloseMessage(record: ClosedPositionRecord): string {
 
 async function sendTelegramText(text: string, config: TelegramConfig): Promise<void> {
   const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: config.chatId, text, parse_mode: "Markdown" }),
   });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Telegram HTTP ${res.status}: ${body || res.statusText}`);
+  }
 }
 
 function formatDuration(openedAt: number, now: number): string {

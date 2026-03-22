@@ -31,14 +31,15 @@ export function confirmEntry(
   // 已失效：永久状态，不重置
   if (setup.confirmationStatus === "invalidated") return setup;
 
-  // 过滤出价格已进入（触及）入场区域的 1h K 线
+  // 过滤出与入场区域有实际重叠的 1h K 线（K 线必须同时满足上下界条件）。
+  // 修复：仅检查单侧边界会纳入完全在区间外侧运行的 K 线，导致虚假确认。
   const inZone = candles1h.filter(c => {
     if (setup.direction === "long") {
-      // 做多: 低价触及 entryHigh 以下（价格进入区域）
-      return c.low <= setup.entryHigh;
+      // 做多: K 线低价触及区间上界 AND 高价触及区间下界（即 K 线与 [entryLow, entryHigh] 有重叠）
+      return c.low <= setup.entryHigh && c.high >= setup.entryLow;
     } else {
-      // 做空: 高价触及 entryLow 以上
-      return c.high >= setup.entryLow;
+      // 做空: K 线高价触及区间下界 AND 低价触及区间上界
+      return c.high >= setup.entryLow && c.low <= setup.entryHigh;
     }
   });
 

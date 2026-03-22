@@ -80,24 +80,25 @@ export function detectLiquiditySweep(
 
   const swingPoints = detectSwingPoints(swingCandles);
   const recentCandles = candles.slice(-sweepWindow);
+  const lowSwings = swingPoints
+    .filter((swing) => swing.type === "low")
+    .sort((a, b) => b.price - a.price);
+  const highSwings = swingPoints
+    .filter((swing) => swing.type === "high")
+    .sort((a, b) => a.price - b.price);
 
-  for (const swing of swingPoints) {
-    // ── 看涨扫描（sweep of swing low）──────────────────────────────────────
-    if (swing.type === "low") {
-      // 找到第一根穿透该 swing low 的 K 线
-      const sweepCandle = recentCandles.find(c => c.low < swing.price);
-      if (!sweepCandle) continue;
-
-      // 4h 收盘确认: 收盘必须回到 swing low 之上（否则为无效扫描，跳过）
-      if (sweepCandle.close <= swing.price) continue;
-
-      const sweepDepth = swing.price - sweepCandle.low; // 穿透深度
+  for (const sweepCandle of recentCandles) {
+    // 同一根扫描 K 线若同时刺破多个 swing low，只保留离当前价格最近的那个代表性流动性池。
+    const matchedLow = lowSwings.find((swing) =>
+      sweepCandle.low < swing.price && sweepCandle.close > swing.price
+    );
+    if (matchedLow) {
+      const sweepDepth = matchedLow.price - sweepCandle.low;
       const entryLow = sweepCandle.low;
-      const entryHigh = swing.price;
+      const entryHigh = matchedLow.price;
       const stopLossHint = entryLow - sweepDepth * 0.3;
       const riskDist = entryHigh - stopLossHint;
       const takeProfitHint = entryHigh + riskDist * config.minimumRiskReward;
-
       const sweepRatio = sweepDepth / baselineAtr;
       const structureScore = clamp(Math.round(65 + sweepRatio * 20), 0, 100);
 
@@ -110,7 +111,7 @@ export function detectLiquiditySweep(
         takeProfitHint,
         structureScore,
         structureReason:
-          `看涨流动性扫描: 刺破swing low ${swing.price.toFixed(0)}, ` +
+          `看涨流动性扫描: 刺破swing low ${matchedLow.price.toFixed(0)}, ` +
           `4h收回 (sweep=${(sweepRatio * 100).toFixed(1)}%ATR)`,
         invalidationReason: `1h收盘跌破 ${stopLossHint.toFixed(0)}`,
         confluenceFactors: ["liquidity-sweep"],
@@ -120,21 +121,17 @@ export function detectLiquiditySweep(
       });
     }
 
-    // ── 看跌扫描（sweep of swing high）─────────────────────────────────────
-    if (swing.type === "high") {
-      const sweepCandle = recentCandles.find(c => c.high > swing.price);
-      if (!sweepCandle) continue;
-
-      // 4h 收盘确认: 收盘必须回到 swing high 之下（否则为无效扫描，跳过）
-      if (sweepCandle.close >= swing.price) continue;
-
-      const sweepDepth = sweepCandle.high - swing.price;
+    // 看跌方向对称：若同一根 K 线刺破多个 swing high，只保留最近的代表性高点。
+    const matchedHigh = highSwings.find((swing) =>
+      sweepCandle.high > swing.price && sweepCandle.close < swing.price
+    );
+    if (matchedHigh) {
+      const sweepDepth = sweepCandle.high - matchedHigh.price;
       const entryHigh = sweepCandle.high;
-      const entryLow = swing.price;
+      const entryLow = matchedHigh.price;
       const stopLossHint = entryHigh + sweepDepth * 0.3;
       const riskDist = stopLossHint - entryLow;
       const takeProfitHint = entryLow - riskDist * config.minimumRiskReward;
-
       const sweepRatio = sweepDepth / baselineAtr;
       const structureScore = clamp(Math.round(65 + sweepRatio * 20), 0, 100);
 
@@ -147,7 +144,7 @@ export function detectLiquiditySweep(
         takeProfitHint,
         structureScore,
         structureReason:
-          `看跌流动性扫描: 刺破swing high ${swing.price.toFixed(0)}, ` +
+          `看跌流动性扫描: 刺破swing high ${matchedHigh.price.toFixed(0)}, ` +
           `4h收回 (sweep=${(sweepRatio * 100).toFixed(1)}%ATR)`,
         invalidationReason: `1h收盘涨破 ${stopLossHint.toFixed(0)}`,
         confluenceFactors: ["liquidity-sweep"],

@@ -8,6 +8,7 @@ import {
   getUnrealizedPnl,
 } from "../../../src/services/paper-trading/monitor-positions.js";
 import { getOpenPositions } from "../../../src/services/positions/track-position.js";
+import { logger } from "../../../src/app/logger.js";
 import type { ExchangeClient } from "../../../src/clients/exchange/ccxt-client.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 
@@ -51,9 +52,12 @@ function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate 
 }
 
 let db: Database.Database;
+let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   db = makeDb();
+  fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
 });
 
 // ── 无仓位情况 ────────────────────────────────────────────────────────────────
@@ -104,6 +108,31 @@ describe("monitorPositions — long TP", () => {
     const client = makeClient(65000);
     const result = await monitorPositions(db, client, "BTC/USDT:USDT");
     expect(result.closedRecords[0].pnlR).toBeCloseTo(2.818, 2);
+  });
+
+  it("平仓 Telegram 返回非 2xx 时会记录警告但不影响平仓", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      text: vi.fn().mockResolvedValue("bot was blocked by the user"),
+    });
+
+    openPosition(db, makeCandidate());
+    const client = makeClient(63000);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+
+    const result = await monitorPositions(
+      db,
+      client,
+      "BTC/USDT:USDT",
+      { botToken: "token", chatId: "chat-id" }
+    );
+
+    expect(result.closed).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
 

@@ -47,6 +47,8 @@ type CandidateRow = {
   participant_confidence: number | null;
   basis_divergence: number;
   liquidity_session: string | null;
+  delivery_started_at: number | null;
+  delivery_completed_at: number | null;
   created_at: number;
   updated_at: number;
 };

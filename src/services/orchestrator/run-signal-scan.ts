@@ -25,6 +25,9 @@ import { analyzeConsensus } from "../consensus/evaluate-consensus.js";
 import { assessMacroOverlay } from "../macro/assess-macro-overlay.js";
 import { applyMacroOverlay } from "../macro/apply-macro-overlay.js";
 import {
+  buildId,
+  markCandidateDeliveryStarted,
+  markCandidateSnapshotDeliveryStarted,
   saveCandidate,
   saveCandidateSnapshot,
   updateCandidateSnapshotOutcome,
@@ -116,6 +119,10 @@ export type SignalScanResult = {
   errors: string[];
 };
 
+// 进程在发送成功后、最终事务提交前异常退出时，数据库里可能暂时残留 pending。
+// 这里对“最近刚创建的 pending 快照”做短时间抑制，避免重启后立刻重复发送同一条告警。
+const RECENT_PENDING_SNAPSHOT_WINDOW_MS = 30 * 60 * 1000;
+
 // ── 主函数 ──────────────────────────────────────────────────────────────────
 
 export async function runSignalScan(
@@ -197,7 +204,11 @@ export async function runSignalScan(
   }
 
   // ── PHASE_18: CVD 订单流确认（4h K 线，窗口 20 根）──────────────────────
-  const orderFlowResult = detectOrderFlowBias(candles4h);
+  const orderFlowResult = detectOrderFlowBias(
+    candles4h,
+    config.cvdWindow,
+    config.cvdNeutralThreshold
+  );
   logger.debug(
     {
       bias: orderFlowResult.bias,
@@ -250,7 +261,7 @@ export async function runSignalScan(
   if (!tradableContext.tradable) {
     logger.info(
       { symbol, reason: tradableContext.reason, reasonCode: tradableContext.reasonCode },
-      "PHASE_31 context gate blocked structural scan"
+      "PHASE_09 context gate blocked structural scan"
     );
     const gatedResult: SignalScanResult = {
       symbol,
@@ -461,6 +472,31 @@ export async function runSignalScan(
       candidate.timeframe,
       candidate.entryHigh
     );
+    const baseCandidateId = existing
+      ? buildId(
+          candidate.symbol,
+          candidate.direction,
+          candidate.timeframe,
+          candidate.entryHigh
+        )
+      : undefined;
+    const recentInFlightSnapshot = baseCandidateId
+      ? (db.prepare(`
+          SELECT
+            delivery_started_at AS deliveryStartedAt,
+            delivery_completed_at AS deliveryCompletedAt
+          FROM candidate_snapshots
+          WHERE base_candidate_id = ?
+            AND alert_status = 'pending'
+            AND delivery_started_at IS NOT NULL
+            AND created_at < ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1
+        `).get(baseCandidateId, scannedAt) as {
+          deliveryStartedAt: number | null;
+          deliveryCompletedAt: number | null;
+        } | undefined)
+      : undefined;
     if (existing?.alertStatus === "sent") {
       updateCandidateSnapshotOutcome(db, snapshotCandidateId, "skipped_duplicate", {
         alertStatus: "skipped_duplicate",
@@ -473,6 +509,28 @@ export async function runSignalScan(
       );
       continue;
     }
+    if (
+      existing?.alertStatus === "pending" &&
+      recentInFlightSnapshot?.deliveryStartedAt &&
+      recentInFlightSnapshot.deliveryCompletedAt === null &&
+      scannedAt - recentInFlightSnapshot.deliveryStartedAt <= RECENT_PENDING_SNAPSHOT_WINDOW_MS
+    ) {
+      updateCandidateSnapshotOutcome(db, snapshotCandidateId, "skipped_duplicate", {
+        alertStatus: "skipped_duplicate",
+        executionReasonCode: "recent_pending_snapshot",
+      });
+      alertsSkipped++;
+      logger.warn(
+        {
+          symbol: candidate.symbol,
+          direction: candidate.direction,
+          existingCreatedAt: existing.createdAt,
+          previousDeliveryStartedAt: recentInFlightSnapshot.deliveryStartedAt,
+        },
+        "Recent in-flight alert attempt detected, skipping duplicate alert after restart/retry"
+      );
+      continue;
+    }
 
     const payload: AlertPayload = {
       candidate,
@@ -481,7 +539,7 @@ export async function runSignalScan(
       createdAt: scannedAt,
     };
 
-    // 永続化（INSERT OR REPLACE）
+    // 永続化（INSERT OR REPLACE），先落 pending 状态，再发告警
     saveCandidate(db, payload, {
       macroAction: result.decision?.action ?? "error",
       confirmationStatus: inferConfirmationStatus(candidate.reasonCodes),
@@ -489,33 +547,52 @@ export async function runSignalScan(
       orderFlowBias: orderFlowResult.bias,
       positionSizing,
     });
-
-    // 发送 Telegram 告警
-    const ok = await sendAlert(payload, telegramConfig, httpFetch, {
-      positionSizing,
-    });
-    const finalStatus = ok ? "sent" : "failed";
-    updateAlertStatus(
+    markCandidateDeliveryStarted(
       db,
       candidate.symbol,
       candidate.direction,
       candidate.timeframe,
       candidate.entryHigh,
-      finalStatus
+      scannedAt
     );
-    updateCandidateSnapshotOutcome(db, snapshotCandidateId, finalStatus, {
-      alertStatus: finalStatus,
+    markCandidateSnapshotDeliveryStarted(db, snapshotCandidateId, scannedAt);
+
+    // 发送 Telegram 告警（异步 IO，不能在事务内）
+    const ok = await sendAlert(payload, telegramConfig, httpFetch, {
+      positionSizing,
     });
+    const finalStatus = ok ? "sent" : "failed";
+    const deliveryCompletedAt = Date.now();
+
+    // 原子化提交结果：告警状态 + 快照结果 + 仓位记录必须同时成功或同时回滚，
+    // 避免进程崩溃后出现"已发告警但无仓位"或"状态仍为 pending"的不一致情形。
+    db.transaction(() => {
+      updateAlertStatus(
+        db,
+        candidate.symbol,
+        candidate.direction,
+        candidate.timeframe,
+        candidate.entryHigh,
+        finalStatus,
+        { deliveryCompletedAt }
+      );
+      updateCandidateSnapshotOutcome(db, snapshotCandidateId, finalStatus, {
+        alertStatus: finalStatus,
+        deliveryCompletedAt,
+      });
+      if (ok) {
+        // PHASE_10-B: 告警发送成功后记录仓位，并更新暴露度统计
+        openPosition(db, candidate, scannedAt, {
+          recommendedPositionSize: positionSizing.recommendedPositionSize,
+          recommendedBaseSize: positionSizing.recommendedBaseSize,
+          riskAmount: positionSizing.riskAmount,
+          accountRiskPercent: positionSizing.accountRiskPercent,
+        });
+      }
+    })();
 
     if (ok) {
       alertsSent++;
-      // PHASE_10-B: 告警发送成功后记录仓位，并更新暴露度统计
-      openPosition(db, candidate, scannedAt, {
-        recommendedPositionSize: positionSizing.recommendedPositionSize,
-        recommendedBaseSize: positionSizing.recommendedBaseSize,
-        riskAmount: positionSizing.riskAmount,
-        accountRiskPercent: positionSizing.accountRiskPercent,
-      });
       logger.info(
         { symbol: candidate.symbol, direction: candidate.direction, grade: candidate.signalGrade },
         "Alert sent"

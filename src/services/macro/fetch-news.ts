@@ -42,9 +42,12 @@ export async function fetchNews(apiKey: string, maxItems: number): Promise<NewsI
   url.searchParams.set("language", "en");
   url.searchParams.set("from", from);
   url.searchParams.set("pageSize", String(Math.min(maxItems, 100)));
-  url.searchParams.set("apiKey", apiKey);
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), {
+    headers: {
+      "X-Api-Key": apiKey,
+    },
+  });
   if (!res.ok) {
     throw new Error(`NewsAPI HTTP ${res.status}: ${res.statusText}`);
   }

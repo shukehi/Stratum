@@ -5,7 +5,7 @@ describe("strategyConfig", () => {
   it("minimumRiskReward is 2.5 (derived from 30-35% win rate assumption)", () => {
     expect(strategyConfig.minimumRiskReward).toBe(2.5);
     expect(strategyConfig.riskPerTrade).toBe(0.01);
-    expect(strategyConfig.accountSizeUsd).toBe(1000);
+    expect(strategyConfig.accountSizeUsd).toBe(10000);
   });
 
   it("has correct participant pressure thresholds", () => {
@@ -38,5 +38,7 @@ describe("strategyConfig", () => {
     expect(strategyConfig.vpLookbackDays).toBe(30);
     expect(strategyConfig.vpBucketCount).toBe(200);
     expect(strategyConfig.vpValueAreaPercent).toBe(0.70);
+    expect(strategyConfig.cvdWindow).toBe(20);
+    expect(strategyConfig.cvdNeutralThreshold).toBe(0.05);
   });
 });

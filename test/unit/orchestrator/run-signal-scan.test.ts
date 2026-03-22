@@ -2,7 +2,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { initDb } from "../../../src/services/persistence/init-db.js";
 import { initPositionsDb } from "../../../src/services/positions/init-positions-db.js";
-import { saveCandidate, updateAlertStatus } from "../../../src/services/persistence/save-candidate.js";
+import {
+  saveCandidate,
+  saveCandidateSnapshot,
+  markCandidateDeliveryStarted,
+  markCandidateSnapshotDeliveryStarted,
+  updateAlertStatus,
+} from "../../../src/services/persistence/save-candidate.js";
 import { runSignalScan } from "../../../src/services/orchestrator/run-signal-scan.js";
 import type { ScanDeps } from "../../../src/services/orchestrator/run-signal-scan.js";
 import { strategyConfig } from "../../../src/app/config.js";
@@ -625,6 +631,71 @@ describe("runSignalScan — 重複アラート抑制", () => {
     const result = await runSignalScan(SYMBOL, SPOT_SYMBOL, deps);
     expect(result.alertsSent).toBe(1);
     expect(result.alertsSkipped).toBe(0);
+  });
+
+  it("最近的 pending snapshot 会触发重启保护，避免立即重复发送", async () => {
+    vi.mocked(analyzeConsensus).mockReturnValue({
+      candidates: [mockCandidate],
+    });
+    vi.mocked(applyMacroOverlay).mockReturnValue([mockCandidate]);
+
+    const deps = makeDeps();
+    const createdAt = Date.now() - 5_000;
+    const pendingPayload: AlertPayload = {
+      candidate: mockCandidate,
+      marketContext: mockCtx,
+      alertStatus: "pending",
+      createdAt,
+    };
+    saveCandidate(deps.db, pendingPayload);
+    const snapshotId = saveCandidateSnapshot(deps.db, pendingPayload, {
+      executionOutcome: "pending",
+    });
+    markCandidateDeliveryStarted(deps.db, "BTCUSDT", "long", "4h", 60000, createdAt);
+    markCandidateSnapshotDeliveryStarted(deps.db, snapshotId, createdAt);
+
+    const result = await runSignalScan(SYMBOL, SPOT_SYMBOL, deps);
+    expect(result.alertsSent).toBe(0);
+    expect(result.alertsSkipped).toBe(1);
+    expect(deps.httpFetch).not.toHaveBeenCalled();
+
+    const row = deps.db.prepare(`
+      SELECT alert_status, execution_outcome, execution_reason_code
+      FROM candidate_snapshots
+      ORDER BY id DESC
+      LIMIT 1
+    `).get() as {
+      alert_status: string;
+      execution_outcome: string;
+      execution_reason_code: string;
+    };
+    expect(row.alert_status).toBe("skipped_duplicate");
+    expect(row.execution_outcome).toBe("skipped_duplicate");
+    expect(row.execution_reason_code).toBe("recent_pending_snapshot");
+  });
+
+  it("只有 in-flight pending snapshot 才会触发重启保护，普通 pending 会继续重试", async () => {
+    vi.mocked(analyzeConsensus).mockReturnValue({
+      candidates: [mockCandidate],
+    });
+    vi.mocked(applyMacroOverlay).mockReturnValue([mockCandidate]);
+
+    const deps = makeDeps();
+    const pendingPayload: AlertPayload = {
+      candidate: mockCandidate,
+      marketContext: mockCtx,
+      alertStatus: "pending",
+      createdAt: Date.now() - 5_000,
+    };
+    saveCandidate(deps.db, pendingPayload);
+    saveCandidateSnapshot(deps.db, pendingPayload, {
+      executionOutcome: "pending",
+    });
+
+    const result = await runSignalScan(SYMBOL, SPOT_SYMBOL, deps);
+    expect(result.alertsSent).toBe(1);
+    expect(result.alertsSkipped).toBe(0);
+    expect(deps.httpFetch).toHaveBeenCalledTimes(1);
   });
 
   it("複数候補: 1つ済み + 1つ新規 → skipped=1, sent=1", async () => {

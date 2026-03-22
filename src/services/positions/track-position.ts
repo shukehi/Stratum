@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import type { OpenPosition, PositionStatus } from "../../domain/position/open-position.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
+import { buildSignalId } from "../../utils/signal-id.js";
 
 /**
  * 仓位追踪服务  (PHASE_10-B)
@@ -61,7 +62,8 @@ export function buildPositionId(
   timeframe: string,
   entryHigh: number
 ): string {
-  return `${symbol}_${direction}_${timeframe}_${Math.floor(entryHigh)}`;
+  // 与 candidates 表共用同一 ID 规则，避免仓位表与候选表出现主键漂移。
+  return buildSignalId(symbol, direction, timeframe, entryHigh);
 }
 
 // ── 开仓 ───────────────────────────────────────────────────────────────────

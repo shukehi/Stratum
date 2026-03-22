@@ -1,3 +1,5 @@
+import { env } from "./env.js";
+
 /**
  * `StrategyConfig` 是系统策略参数的统一类型定义。
  *
@@ -62,6 +64,8 @@ export type StrategyConfig = {
   readonly vpLookbackDays: number;       // VP 计算窗口（近 N 根日线，默认 30）
   readonly vpBucketCount: number;        // VP 价格分桶数（默认 200）
   readonly vpValueAreaPercent: number;   // 价值区间覆盖比例（默认 0.70 = 70%）
+  readonly cvdWindow: number;            // CVD 分析窗口（最近 N 根 4h K 线）
+  readonly cvdNeutralThreshold: number;  // CVD 中性阈值（归一化后的斜率阈值）
 
   // --- 等高等低（Equal Highs / Lows）---
   readonly equalLevelTolerance: number;   // 价格容差比例（默认 0.001 = 0.1%）
@@ -80,8 +84,8 @@ export const strategyConfig = {
 
   // --- 风险回报 ---
   minimumRiskReward: 2.5,
-  riskPerTrade: 0.01,
-  accountSizeUsd: 1000,
+  riskPerTrade: env.RISK_PER_TRADE,
+  accountSizeUsd: env.ACCOUNT_SIZE,
 
   // --- 市场状态 ---
   minRegimeConfidence: 60,
@@ -127,6 +131,8 @@ export const strategyConfig = {
   vpLookbackDays: 30,           // 用最近 30 根日线计算 VP（≈ 1 个月）
   vpBucketCount: 200,           // 200 个等宽价格桶
   vpValueAreaPercent: 0.70,     // 价值区间覆盖 70% 成交量（Market Profile 惯例）
+  cvdWindow: 20,                // 最近 20 根 4h K 线用于订单流动量对比
+  cvdNeutralThreshold: 0.05,    // 归一化斜率落在 ±5% 内视为中性
 
   // --- 等高等低（Equal Highs / Lows）---
   equalLevelTolerance: 0.001,  // 0.1% 容差（BTC@50k ≈ ±50 USDT）

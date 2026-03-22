@@ -44,6 +44,11 @@ export function detectFvg(
       const gapSize = entryHigh - entryLow;
       if (gapSize <= 0) continue;
 
+      // 检查缺口形成后（i+1 起）是否已有 K 线收盘穿越整个缺口（close < entryLow）。
+      // 若已填充则跳过，避免对已失效区域发出信号。
+      const isFilled = recent.slice(i + 1).some(c => c.close < entryLow);
+      if (isFilled) continue;
+
       // 止损放在缺口下方 0.5 倍缺口距离处
       const stopLossHint = entryLow - gapSize * 0.5;
       const riskDist = entryHigh - stopLossHint;
@@ -77,6 +82,10 @@ export function detectFvg(
       const entryLow = c2.high;
       const gapSize = entryHigh - entryLow;
       if (gapSize <= 0) continue;
+
+      // 看跌缺口：收盘穿越整个缺口（close > entryHigh）表示已填充
+      const isFilled = recent.slice(i + 1).some(c => c.close > entryHigh);
+      if (isFilled) continue;
 
       const stopLossHint = entryHigh + gapSize * 0.5;
       const riskDist = stopLossHint - entryLow;

@@ -6,7 +6,7 @@ import { initPositionsDb } from "../positions/init-positions-db.js";
  *
  * 负责创建扫描日志、候选信号、K 线缓存、候选快照等核心表。
  * 候选信号使用确定性主键：
- *   `symbol + direction + timeframe + floor(entryHigh)`
+ *   `symbol + direction + timeframe + entryHigh.toFixed(8)`
  *
  * 同一信号被重复评估时会覆盖旧记录，而不是写出重复候选。
  */
@@ -59,6 +59,8 @@ export function initDb(db: Database.Database): void {
       projected_same_direction_risk_percent REAL,
       portfolio_open_risk_percent REAL,
       projected_portfolio_risk_percent REAL,
+      delivery_started_at INTEGER,
+      delivery_completed_at INTEGER,
       created_at       INTEGER NOT NULL,
       updated_at       INTEGER NOT NULL
     );
@@ -125,6 +127,8 @@ export function initDb(db: Database.Database): void {
       participant_confidence    REAL,
       basis_divergence          INTEGER NOT NULL DEFAULT 0,
       liquidity_session         TEXT,
+      delivery_started_at       INTEGER,
+      delivery_completed_at     INTEGER,
       execution_outcome         TEXT,
       execution_reason_code     TEXT,
       created_at                INTEGER NOT NULL
@@ -168,6 +172,8 @@ export function initDb(db: Database.Database): void {
   ensureColumn(db, "candidates", "projected_same_direction_risk_percent", "REAL");
   ensureColumn(db, "candidates", "portfolio_open_risk_percent", "REAL");
   ensureColumn(db, "candidates", "projected_portfolio_risk_percent", "REAL");
+  ensureColumn(db, "candidates", "delivery_started_at", "INTEGER");
+  ensureColumn(db, "candidates", "delivery_completed_at", "INTEGER");
   ensureColumn(db, "candidate_snapshots", "base_candidate_id", "TEXT");
   ensureColumn(db, "candidate_snapshots", "recommended_position_size", "REAL");
   ensureColumn(db, "candidate_snapshots", "recommended_base_size", "REAL");
@@ -179,6 +185,8 @@ export function initDb(db: Database.Database): void {
   ensureColumn(db, "candidate_snapshots", "portfolio_open_risk_percent", "REAL");
   ensureColumn(db, "candidate_snapshots", "projected_portfolio_risk_percent", "REAL");
   ensureColumn(db, "candidate_snapshots", "liquidity_session", "TEXT");
+  ensureColumn(db, "candidate_snapshots", "delivery_started_at", "INTEGER");
+  ensureColumn(db, "candidate_snapshots", "delivery_completed_at", "INTEGER");
   ensureColumn(db, "candidate_snapshots", "execution_outcome", "TEXT");
   ensureColumn(db, "candidate_snapshots", "execution_reason_code", "TEXT");
 }
@@ -196,6 +204,17 @@ export function openDb(path: string): Database.Database {
   return db;
 }
 
+// 允许的表名白名单，防止标识符注入
+const ALLOWED_TABLES = new Set([
+  "scan_logs",
+  "candidates",
+  "candidate_snapshots",
+  "positions",
+]);
+
+// 列名只允许小写字母、数字、下划线，且不以数字开头
+const COLUMN_NAME_RE = /^[a-z_][a-z0-9_]*$/;
+
 function ensureColumn(
   db: Database.Database,
   tableName: string,
@@ -203,6 +222,12 @@ function ensureColumn(
   definition: string
 ): void {
   // 对历史数据库执行增量补字段，避免手工迁移。
+  if (!ALLOWED_TABLES.has(tableName)) {
+    throw new Error(`ensureColumn: 非法表名 "${tableName}"`);
+  }
+  if (!COLUMN_NAME_RE.test(columnName)) {
+    throw new Error(`ensureColumn: 非法列名 "${columnName}"`);
+  }
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   if (columns.some((column) => column.name === columnName)) return;
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
