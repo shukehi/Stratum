@@ -20,7 +20,7 @@ pnpm dev
 
 ```bash
 sudo apt update
-sudo apt install -y git curl build-essential
+sudo apt install -y git curl build-essential python3
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 sudo corepack enable
@@ -40,9 +40,10 @@ pnpm deploy:vps
 1. `.env` 不存在时从 `.env.example` 生成
 2. 创建 `DATABASE_URL` 对应目录
 3. 安装依赖
-4. 运行 `pnpm typecheck`
-5. 运行 `pnpm test`
-6. 运行 `pnpm build`
+4. 重建 `better-sqlite3` 原生绑定
+5. 运行 `pnpm typecheck`
+6. 运行 `pnpm test`
+7. 运行 `pnpm build`
 
 ### 3. 最小 `.env` 配置
 
@@ -89,10 +90,11 @@ pnpm update:vps
 
 1. `git pull --ff-only`
 2. 安装依赖
-3. 运行 `pnpm typecheck`
-4. 运行 `pnpm test`
-5. 运行 `pnpm build`
-6. 检测到 `stratum.service` 时自动重启
+3. 重建 `better-sqlite3` 原生绑定
+4. 运行 `pnpm typecheck`
+5. 运行 `pnpm test`
+6. 运行 `pnpm build`
+7. 检测到 `stratum.service` 时自动重启
 
 如果你的 systemd 单元名不是 `stratum.service`，可这样运行：
 

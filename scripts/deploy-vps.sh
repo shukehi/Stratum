@@ -32,6 +32,7 @@ fi
 
 echo "Installing dependencies..."
 pnpm install --frozen-lockfile
+pnpm rebuild better-sqlite3
 
 echo "Running verification..."
 pnpm typecheck
