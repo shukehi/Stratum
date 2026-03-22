@@ -7,9 +7,10 @@ Wants=network-online.target
 Type=simple
 User=__USER__
 WorkingDirectory=__WORKDIR__
-ExecStart=__PNPM_BIN__ dev
+ExecStart=/bin/bash __WORKDIR__/scripts/run-service.sh
 Restart=always
 RestartSec=10
+RestartPreventExitStatus=3
 
 [Install]
 WantedBy=multi-user.target
