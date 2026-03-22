@@ -12,7 +12,7 @@ pnpm dev
 
 ## VPS 部署与测试
 
-> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/update-vps.sh`、`scripts/run-service.sh`、`scripts/install-systemd-service.sh`、`scripts/install-systemd-update-timer.sh`、`deploy/stratum.service`。
+> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/update-vps.sh`、`scripts/run-service.sh`、`scripts/boot.sh`、`scripts/install-systemd-service.sh`、`scripts/install-systemd-update-timer.sh`、`deploy/stratum.service`。
 
 ### 1. VPS 基础环境
 
@@ -75,6 +75,20 @@ pnpm dev
 ```bash
 sudo ./scripts/install-systemd-service.sh
 journalctl -u stratum.service -f
+```
+
+如果你只想“一键运行”，直接用：
+
+```bash
+cd /opt/stratum
+sudo ./scripts/boot.sh
+```
+
+如果你想启动后立刻跟日志：
+
+```bash
+cd /opt/stratum
+sudo ./scripts/boot.sh --logs
 ```
 
 服务会通过 `scripts/run-service.sh` 启动，它会：
