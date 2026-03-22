@@ -3,6 +3,7 @@ import type { MacroAssessment, MacroOverlayDecision } from "../../domain/macro/m
 import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { StrategyConfig } from "../../app/config.js";
+import { logger } from "../../app/logger.js";
 import { buildMacroPrompt } from "./build-macro-prompt.js";
 import { parseMacroResponse } from "./parse-macro-response.js";
 
@@ -46,11 +47,12 @@ export async function assessMacroOverlay(
   llmCall: LlmCallFn
 ): Promise<{ assessment: MacroAssessment; decision: MacroOverlayDecision }> {
   const prompt = buildMacroPrompt(news, candidate, config);
+  const startedAt = Date.now();
 
   let rawResponse: string;
   try {
     rawResponse = await llmCall(prompt);
-  } catch {
+  } catch (error) {
     // LLM 调用失败（网络超时 / API 错误）→ 降级为中性，默认 pass
     const assessment = parseMacroResponse(prompt, "");
     const decision: MacroOverlayDecision = {
@@ -59,11 +61,36 @@ export async function assessMacroOverlay(
       reason: "LLM 调用失败，无法获取宏观评估，默认通过",
       reasonCodes: [],
     };
+    logger.warn(
+      {
+        symbol: candidate.symbol,
+        direction: candidate.direction,
+        timeframe: candidate.timeframe,
+        elapsedMs: Date.now() - startedAt,
+        err: error,
+        fallbackAction: decision.action,
+      },
+      "Macro overlay LLM call failed; defaulting to pass"
+    );
     return { assessment, decision };
   }
 
   const assessment = parseMacroResponse(prompt, rawResponse);
   const decision = deriveDecision(assessment, candidate, config);
+  logger.info(
+    {
+      symbol: candidate.symbol,
+      direction: candidate.direction,
+      timeframe: candidate.timeframe,
+      elapsedMs: Date.now() - startedAt,
+      macroBias: assessment.macroBias,
+      confidenceScore: assessment.confidenceScore,
+      btcRelevance: assessment.btcRelevance,
+      riskFlags: assessment.riskFlags.length,
+      action: decision.action,
+    },
+    "Macro overlay assessment completed"
+  );
   return { assessment, decision };
 }
 

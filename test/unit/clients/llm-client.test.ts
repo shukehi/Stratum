@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createLlmClient } from "../../../src/clients/llm/llm-client.js";
+import { logger } from "../../../src/app/logger.js";
 
 // ── 测试夹具 ──────────────────────────────────────────────────────────────────
 
@@ -10,10 +11,15 @@ const MOCK_PROMPT = "分析当前 BTC 宏观环境";
 describe("createLlmClient — apiKey 未设置", () => {
   it("返回空字符串，不发起任何 HTTP 请求", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
     const llmCall = createLlmClient({ apiKey: undefined, provider: "anthropic" });
     const result = await llmCall(MOCK_PROMPT);
     expect(result).toBe("");
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+      { provider: "anthropic" },
+      "LLM_API_KEY not set, skipping macro LLM call"
+    );
     fetchSpy.mockRestore();
   });
 
@@ -37,6 +43,7 @@ describe("createLlmClient — anthropic", () => {
         content: [{ type: "text", text: "宏观看空" }],
       }),
     } as Response);
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const llmCall = createLlmClient({ apiKey: "sk-ant-test", provider: "anthropic" });
     const result = await llmCall(MOCK_PROMPT);
@@ -47,6 +54,22 @@ describe("createLlmClient — anthropic", () => {
     const headers = init?.headers as Record<string, string>;
     expect(headers["x-api-key"]).toBe("sk-ant-test");
     expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        model: "claude-3-haiku-20240307",
+        promptChars: MOCK_PROMPT.length,
+      }),
+      "LLM request started"
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        model: "claude-3-haiku-20240307",
+        responseChars: "宏观看空".length,
+      }),
+      "LLM request succeeded"
+    );
   });
 
   it("使用指定 model", async () => {
@@ -85,9 +108,17 @@ describe("createLlmClient — anthropic", () => {
       status: 401,
       statusText: "Unauthorized",
     } as Response);
+    const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => logger);
 
     const llmCall = createLlmClient({ apiKey: "bad-key", provider: "anthropic" });
     await expect(llmCall(MOCK_PROMPT)).rejects.toThrow("Anthropic API HTTP 401");
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        model: "claude-3-haiku-20240307",
+      }),
+      "LLM request failed"
+    );
   });
 
   it("content 为空时返回空字符串", async () => {
@@ -115,6 +146,7 @@ describe("createLlmClient — openrouter", () => {
         choices: [{ message: { content: "中性，可以开仓" } }],
       }),
     } as Response);
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const llmCall = createLlmClient({ apiKey: "or-key-test", provider: "openrouter" });
     const result = await llmCall(MOCK_PROMPT);
@@ -124,6 +156,14 @@ describe("createLlmClient — openrouter", () => {
     expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
     const headers = init?.headers as Record<string, string>;
     expect(headers["Authorization"]).toBe("Bearer or-key-test");
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openrouter",
+        model: "google/gemini-flash-1.5",
+        responseChars: "中性，可以开仓".length,
+      }),
+      "LLM request succeeded"
+    );
   });
 
   it("使用指定 model", async () => {

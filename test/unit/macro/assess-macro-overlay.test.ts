@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { assessMacroOverlay } from "../../../src/services/macro/assess-macro-overlay.js";
 import type { LlmCallFn } from "../../../src/services/macro/assess-macro-overlay.js";
 import type { NewsItem } from "../../../src/domain/news/news-item.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 import { strategyConfig } from "../../../src/app/config.js";
+import { logger } from "../../../src/app/logger.js";
 
 // ── 测试夹具 ──────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,10 @@ const SAMPLE_NEWS: NewsItem[] = [
 function makeLlm(response: Record<string, unknown>): LlmCallFn {
   return async () => JSON.stringify(response);
 }
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+});
 
 function bullishResponse() {
   return {
@@ -103,6 +108,24 @@ describe("assessMacroOverlay — assessment 透传", () => {
     expect(assessment.rawPrompt.length).toBeGreaterThan(0);
     expect(assessment.rawPrompt).toContain("Fed signals rate cuts");
     expect(assessment.rawPrompt).toContain("Direction: long");
+  });
+
+  it("成功完成时会记录宏观评估日志", async () => {
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
+    await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, makeLlm(bullishResponse()));
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: "BTCUSDT",
+        direction: "long",
+        timeframe: "4h",
+        macroBias: "bullish",
+        confidenceScore: 8,
+        btcRelevance: 8,
+        riskFlags: 0,
+        action: "pass",
+      }),
+      "Macro overlay assessment completed"
+    );
   });
 });
 
@@ -233,6 +256,21 @@ describe("assessMacroOverlay — LLM 调用抛出异常", () => {
     const throwingLlm: LlmCallFn = async () => { throw new Error("Timeout"); };
     const { decision } = await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, throwingLlm);
     expect(decision.reasonCodes).toHaveLength(0);
+  });
+
+  it("llmCall 抛出时会记录降级日志", async () => {
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const throwingLlm: LlmCallFn = async () => { throw new Error("Network timeout"); };
+    await assessMacroOverlay(SAMPLE_NEWS, makeCandidate(), strategyConfig, throwingLlm);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: "BTCUSDT",
+        direction: "long",
+        timeframe: "4h",
+        fallbackAction: "pass",
+      }),
+      "Macro overlay LLM call failed; defaulting to pass"
+    );
   });
 });
 

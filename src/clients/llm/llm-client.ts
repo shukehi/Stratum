@@ -107,16 +107,50 @@ export function createLlmClient(config: LlmClientConfig): LlmCallFn {
   const resolvedModel = model || DEFAULT_MODELS[provider] || DEFAULT_MODELS.anthropic;
 
   if (!apiKey) {
-    logger.debug({ provider }, "LLM_API_KEY not set, skipping macro LLM call");
+    logger.warn({ provider }, "LLM_API_KEY not set, skipping macro LLM call");
     return async () => "";
   }
 
   logger.info({ provider, model: resolvedModel }, "LLM client initialized");
 
   return async (prompt: string): Promise<string> => {
-    if (provider === "openrouter") {
-      return callOpenRouter(prompt, apiKey, resolvedModel);
+    const startedAt = Date.now();
+    logger.info(
+      {
+        provider,
+        model: resolvedModel,
+        promptChars: prompt.length,
+      },
+      "LLM request started"
+    );
+
+    try {
+      const response =
+        provider === "openrouter"
+          ? await callOpenRouter(prompt, apiKey, resolvedModel)
+          : await callAnthropic(prompt, apiKey, resolvedModel);
+
+      logger.info(
+        {
+          provider,
+          model: resolvedModel,
+          elapsedMs: Date.now() - startedAt,
+          responseChars: response.length,
+        },
+        "LLM request succeeded"
+      );
+      return response;
+    } catch (error) {
+      logger.error(
+        {
+          provider,
+          model: resolvedModel,
+          elapsedMs: Date.now() - startedAt,
+          err: error,
+        },
+        "LLM request failed"
+      );
+      throw error;
     }
-    return callAnthropic(prompt, apiKey, resolvedModel);
   };
 }
