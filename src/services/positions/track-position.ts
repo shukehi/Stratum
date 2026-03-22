@@ -53,7 +53,7 @@ export type OpenRiskSummary = {
   openRiskPercent: number;
 };
 
-// ── 主キー生成 ────────────────────────────────────────────────────────────
+// ── 主键生成 ────────────────────────────────────────────────────────────────
 
 export function buildPositionId(
   symbol: string,
@@ -64,7 +64,7 @@ export function buildPositionId(
   return `${symbol}_${direction}_${timeframe}_${Math.floor(entryHigh)}`;
 }
 
-// ── 開仓 ──────────────────────────────────────────────────────────────────
+// ── 开仓 ───────────────────────────────────────────────────────────────────
 
 export function openPosition(
   db: Database.Database,
@@ -105,7 +105,7 @@ export function openPosition(
   );
 }
 
-// ── 平仓 ──────────────────────────────────────────────────────────────────
+// ── 平仓 ───────────────────────────────────────────────────────────────────
 
 export function closePosition(
   db: Database.Database,
@@ -123,7 +123,7 @@ export function closePosition(
     .prepare("SELECT entry_low, entry_high, stop_loss FROM positions WHERE id = ?")
     .get(id) as { entry_low: number; entry_high: number; stop_loss: number } | undefined;
 
-  if (!row) return; // 存在しない仓位は無視
+  if (!row) return; // 若仓位不存在，直接忽略，避免重复平仓时报错
 
   const entryMid = (row.entry_low + row.entry_high) / 2;
   const risk = Math.abs(entryMid - row.stop_loss);
@@ -141,7 +141,7 @@ export function closePosition(
   `).run(status, closedAt, closePrice, pnlR, id);
 }
 
-// ── クエリ ────────────────────────────────────────────────────────────────
+// ── 查询 ───────────────────────────────────────────────────────────────────
 
 export function getOpenPositions(db: Database.Database): OpenPosition[] {
   const rows = db
@@ -151,9 +151,8 @@ export function getOpenPositions(db: Database.Database): OpenPosition[] {
 }
 
 /**
- * 指定方向の open 仓位数を返す。
- * evaluateConsensus の openLongCount / openShortCount に渡すことで
- * 相関性暴露制限（門槛 7）を実効化する。
+ * 返回指定方向当前处于 `open` 状态的仓位数。
+ * 该值会传给 `evaluateConsensus`，用于执行相关性暴露门槛。
  */
 export function countOpenByDirection(
   db: Database.Database,
@@ -171,6 +170,7 @@ export function getOpenRiskSummary(
   db: Database.Database,
   direction?: "long" | "short"
 ): OpenRiskSummary {
+  // 聚合同向或全组合的已开风险，用于仓位建议和执行闸门。
   const baseSql = `
     SELECT
       COUNT(*) as open_count,
@@ -210,7 +210,7 @@ export function findPosition(
   return row ? rowToPosition(row) : undefined;
 }
 
-// ── 内部变换 ────────────────────────────────────────────────────────────────
+// ── 内部转换 ────────────────────────────────────────────────────────────────
 
 function rowToPosition(row: PositionRow): OpenPosition {
   return {

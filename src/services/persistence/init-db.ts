@@ -2,14 +2,13 @@ import Database from "better-sqlite3";
 import { initPositionsDb } from "../positions/init-positions-db.js";
 
 /**
- * DB 初期化  (PHASE_08)
+ * 数据库初始化  (PHASE_08)
  *
- * candidates テーブルを作成（存在しない場合のみ）。
- * id = symbol + direction + timeframe + entryHigh の組み合わせ（小数点以下切り捨て）。
+ * 负责创建扫描日志、候选信号、K 线缓存、候选快照等核心表。
+ * 候选信号使用确定性主键：
+ *   `symbol + direction + timeframe + floor(entryHigh)`
  *
- * デタミニスティック主キー戦略:
- *   同一シグナルが複数回評価された場合に重複レコードを防ぐため、
- *   INSERT OR REPLACE で最新状態を上書きする。
+ * 同一信号被重复评估时会覆盖旧记录，而不是写出重复候选。
  */
 export function initDb(db: Database.Database): void {
   db.exec(`
@@ -185,8 +184,8 @@ export function initDb(db: Database.Database): void {
 }
 
 /**
- * 新しい better-sqlite3 Database インスタンスを作成して初期化する。
- * テスト: path=":memory:" を渡すとインメモリ DB になる。
+ * 创建并初始化新的 `better-sqlite3` 数据库实例。
+ * 测试时传入 `:memory:` 可直接使用内存数据库。
  */
 export function openDb(path: string): Database.Database {
   const db = new Database(path);
@@ -203,6 +202,7 @@ function ensureColumn(
   columnName: string,
   definition: string
 ): void {
+  // 对历史数据库执行增量补字段，避免手工迁移。
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   if (columns.some((column) => column.name === columnName)) return;
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);

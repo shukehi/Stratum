@@ -1,4 +1,4 @@
-// PHASE_10-B FROZEN — do not modify fields
+// PHASE_10-B 已冻结：不要修改字段定义
 import type { TradeCandidate } from "../signal/trade-candidate.js";
 
 /**
@@ -36,9 +36,9 @@ export type OpenPosition = {
   takeProfit: number;
   riskReward: number;
   signalGrade: TradeCandidate["signalGrade"];
-  openedAt: number;   // Unix ms — 仓位开启时间（= alert 发送时间）
+  openedAt: number;   // Unix 毫秒时间戳，通常等于告警发送时间
   status: PositionStatus;
-  closedAt?: number;  // Unix ms — 平仓时间（status !== "open" の場合のみ）
+  closedAt?: number;  // Unix 毫秒时间戳，仅在仓位已平仓时存在
   closePrice?: number;
   pnlR?: number;      // 平仓后填充
 };

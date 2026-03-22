@@ -29,7 +29,7 @@ export type VPOptions = {
 /**
  * 根据 K 线列表计算 Volume Profile。
  *
- * @param candles       K 线数组（时间顺序，chronological）
+ * @param candles       K 线数组（按时间升序排列）
  * @param options       可选配置
  * @returns             VolumeProfile 或 null（K 线不足 / 价格区间为零时）
  */

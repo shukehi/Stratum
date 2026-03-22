@@ -3,6 +3,12 @@ import type { FundingRatePoint } from "../../domain/market/funding-rate.js";
 import type { OpenInterestPoint } from "../../domain/market/open-interest.js";
 import { logger } from "../../app/logger.js";
 
+/**
+ * 交易所数据访问接口。
+ *
+ * 服务层只依赖这个抽象，便于在测试中注入 mock，
+ * 或在未来替换为不同的数据源实现。
+ */
 export interface ExchangeClient {
   fetchOHLCV(symbol: string, timeframe: string, limit: number): Promise<Candle[]>;
   fetchFundingRates(symbol: string, limit: number): Promise<FundingRatePoint[]>;
@@ -11,6 +17,14 @@ export interface ExchangeClient {
   fetchSpotTicker(symbol: string): Promise<{ last: number }>;
 }
 
+/**
+ * 基于 ccxt 的交易所客户端实现。
+ *
+ * 统一负责：
+ *   1. 延迟创建交易所实例；
+ *   2. 将 ccxt 原始响应规范化为系统内部领域类型；
+ *   3. 对部分非关键接口失败进行降级处理。
+ */
 export class CcxtClient implements ExchangeClient {
   private exchange: any;
   private spotExchange: any;
@@ -21,9 +35,9 @@ export class CcxtClient implements ExchangeClient {
   constructor(exchangeName: string, spotSymbol: string) {
     this.exchangeName = exchangeName;
     this.spotSymbol = spotSymbol;
-    // 期货交易所 → 对应现货交易所（binanceusdm → binance）
+    // 永续合约交易所名称不一定能直接用于现货行情，必要时切换到对应现货所。
     this.spotExchangeName = exchangeName === "binanceusdm" ? "binance" : exchangeName;
-    // Lazy init - exchange created on first use
+    // 延迟初始化：只有真正发起请求时才创建 ccxt 实例，避免启动阶段做无效连接。
     this.exchange = null;
     this.spotExchange = null;
   }

@@ -1,25 +1,25 @@
-// PHASE_10-C FROZEN — do not modify fields
+// PHASE_10-C 已冻结：不要修改字段定义
 
 /**
- * バックテスト用ドメイン型  (PHASE_10-C)
+ * 回测领域类型  (PHASE_10-C)
  *
- * 設計原則:
- *   - BacktestSignal: 構造検出が出力したシグナルのスナップショット
- *   - BacktestTrade:  シミュレーション後の取引結果（pnlR 付き）
- *   - BacktestStats:  全取引の統計サマリー
+ * 设计原则：
+ *   - `BacktestSignal`：结构检测在某一时刻输出的信号快照；
+ *   - `BacktestTrade`：该信号经过交易模拟后的结果；
+ *   - `BacktestStats`：所有交易汇总后的统计摘要。
  *
- * エントリー価格は entryHigh（保守的最悪フィル）を採用:
- *   long:  entryHigh で買い（高い方 = 不利フィル）
- *   short: entryLow  で売り（低い方 = 不利フィル）
+ * 入场价格沿用保守最差成交假设：
+ *   - 做多使用 `entryHigh`；
+ *   - 做空使用 `entryLow`。
  */
 
 export type BacktestSignal = {
-  /** candles4h 配列における発火インデックス */
+  /** 在 `candles4h` 数组中的触发索引。 */
   candleIndex: number;
   direction: "long" | "short";
-  /** エントリーゾーン上端（long の保守的フィル価格） */
+  /** 入场区上沿，做多时也作为保守成交价。 */
   entryHigh: number;
-  /** エントリーゾーン下端（short の保守的フィル価格） */
+  /** 入场区下沿，做空时也作为保守成交价。 */
   entryLow: number;
   stopLoss: number;
   takeProfit: number;
@@ -31,14 +31,14 @@ export type BacktestTradeStatus = "closed_tp" | "closed_sl" | "expired";
 
 export type BacktestTrade = {
   signal: BacktestSignal;
-  /** 実際のエントリー価格（long=entryHigh, short=entryLow）*/
+  /** 实际采用的入场价格：做多为 `entryHigh`，做空为 `entryLow`。 */
   entryPrice: number;
-  /** 実際のエグジット価格（TP/SL 値、または最終足の終値）*/
+  /** 实际出场价格，可能是 TP、SL 或最后一根收盘价。 */
   exitPrice: number;
-  /** エグジットが確定した candles4h インデックス */
+  /** 出场确认时在 `candles4h` 中对应的索引。 */
   exitCandleIndex: number;
   status: BacktestTradeStatus;
-  /** R 倍数での損益（+1.0R = 1 リスク分の利益）*/
+  /** 以 R 倍数表示的盈亏，`+1.0R` 表示赚到一倍风险金额。 */
   pnlR: number;
 };
 
@@ -47,15 +47,15 @@ export type BacktestStats = {
   closedTrades: number;     // closed_tp + closed_sl
   wins: number;             // closed_tp
   losses: number;           // closed_sl
-  expired: number;          // データ終端まで未決済
-  /** wins / closedTrades (closedTrades=0 の場合は 0) */
+  expired: number;          // 到数据尾部仍未平仓的交易数
+  /** `wins / closedTrades`；若 `closedTrades=0` 则返回 0。 */
   winRate: number;
-  /** closedTrades の pnlR 平均（期待値） */
+  /** 已平仓交易 `pnlR` 的平均值，可视作期望值。 */
   avgPnlR: number;
-  /** closedTrades の pnlR 合計 */
+  /** 已平仓交易 `pnlR` 的合计值。 */
   totalR: number;
-  /** 累積 R 曲線の最大ドローダウン */
+  /** 累计 R 曲线的最大回撤。 */
   maxDrawdownR: number;
-  /** Sharpe 比（pnlR の平均 / 標準偏差、<2 取引の場合は 0） */
+  /** Sharpe 比，定义为 `mean(pnlR) / std(pnlR)`；交易数少于 2 时为 0。 */
   sharpeRatio: number;
 };

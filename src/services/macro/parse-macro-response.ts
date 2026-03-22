@@ -48,7 +48,7 @@ function clampInt(v: unknown, lo = 0, hi = 10): number {
 }
 
 export function parseMacroResponse(rawPrompt: string, rawResponse: string): MacroAssessment {
-  // Strip Markdown code fences if present
+  // 如果响应包在 Markdown 代码块里，先剥离围栏再解析
   const cleaned = rawResponse
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```\s*$/, "")
@@ -61,7 +61,7 @@ export function parseMacroResponse(rawPrompt: string, rawResponse: string): Macr
     return neutralAssessment(rawPrompt, rawResponse);
   }
 
-  // Validate required fields exist and have correct types
+  // 校验必填字段是否存在且类型正确
   if (
     typeof parsed.macroBias !== "string" ||
     !VALID_BIASES.has(parsed.macroBias) ||

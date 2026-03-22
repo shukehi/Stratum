@@ -38,7 +38,7 @@ export function applyMacroOverlay(
       };
     }
 
-    // pass
+    // `pass` 场景只补充宏观原因与 reasonCodes，不改变信号等级
     return {
       ...c,
       macroReason: decision.reason,
@@ -52,5 +52,5 @@ export function applyMacroOverlay(
 function downgradeGrade(grade: SignalGrade): SignalGrade {
   if (grade === "high-conviction") return "standard";
   if (grade === "standard") return "watch";
-  return "watch"; // already floor
+  return "watch"; // 已经是最低等级，不再继续下调
 }

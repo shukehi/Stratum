@@ -1,4 +1,4 @@
-// PHASE_02 FROZEN - do not modify fields
+// PHASE_02 已冻结：不要修改字段定义
 import type { ReasonCode } from "../common/reason-code.js";
 import type { MarketRegime } from "../regime/market-regime.js";
 import type { MarketDriverType } from "../regime/market-driver-type.js";

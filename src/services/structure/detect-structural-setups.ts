@@ -95,7 +95,7 @@ export function analyzeStructuralSetups(
     ...detectEqualLows(candles4h, config.equalLevelTolerance),
   ];
 
-  // Fix 3: 时效过滤 — 超过 equalLevelMaxAgeDays 天未被触碰的等高等低区域排除
+  // 修复 3：执行时效过滤，超过 equalLevelMaxAgeDays 天未被触碰的等高等低区域直接排除
   const nowTs   = candles4h[candles4h.length - 1].timestamp;
   const maxAgeMs = config.equalLevelMaxAgeDays * 24 * 3_600_000;
   const allEqualLevels = rawEqualLevels.filter(

@@ -4,9 +4,9 @@ import type { MarketContext } from "../../domain/market/market-context.js";
 import type { PositionSizingSummary } from "../../domain/signal/position-sizing.js";
 
 /**
- * アラートフォーマッタ  (PHASE_08)
+ * 告警文本格式化器  (PHASE_08)
  *
- * TradeCandidate + MarketContext を Telegram 送信用テキストに変換する（純粋関数）。
+ * 将 `TradeCandidate + MarketContext` 转为 Telegram 可直接发送的纯文本。
  *
  * 出力例:
  *   🟢 LONG BTCUSDT · HIGH-CONVICTION
@@ -22,10 +22,10 @@ import type { PositionSizingSummary } from "../../domain/signal/position-sizing.
  *   Context     趋势市场，London 时段
  *   Macro       Fed pivot supports BTC.
  *
- * 設計方針:
- *   - Telegram MarkdownV2 ではなくプレーンテキストを使用（エスケープ不要）
- *   - 数値は読みやすい形式に整形（カンマ区切り、小数点 0-2 桁）
- *   - macroReason が undefined の場合は Macro 行を省略
+ * 设计方针：
+ *   - 使用纯文本而非 Telegram MarkdownV2，避免额外转义；
+ *   - 数值统一格式化，提升阅读速度；
+ *   - `macroReason` 缺失时直接省略对应行。
  */
 
 const GRADE_EMOJI: Record<TradeCandidate["signalGrade"], string> = {

@@ -3,20 +3,20 @@ import type { PositionSizingSummary } from "../../domain/signal/position-sizing.
 import { formatAlert } from "./format-alert.js";
 
 /**
- * Telegram アラート送信  (PHASE_08)
+ * Telegram 告警发送器  (PHASE_08)
  *
- * 職責:
- *   AlertPayload を受け取り、formatAlert でテキスト化して
- *   Telegram Bot API (/sendMessage) に POST する。
+ * 职责：
+ *   接收 `AlertPayload`，先通过 `formatAlert` 生成文本，再调用
+ *   Telegram Bot API 的 `/sendMessage` 接口发送。
  *
- * 設計:
- *   - botToken / chatId は外部から注入（env を直接参照しない → テスト容易性）
- *   - fetch は httpFetch パラメータとして注入（テストでモック可能）
- *   - 送信成功 → true; HTTP エラー / ネットワーク失敗 → false（throw しない）
+ * 设计约束：
+ *   - `botToken` / `chatId` 通过参数注入，便于测试；
+ *   - `fetch` 通过参数注入，测试时可直接 mock；
+ *   - 发送失败返回 `false`，不向上抛异常，避免阻断主扫描链路。
  *
- * 制限:
- *   - Telegram メッセージ上限 4096 文字（formatAlert 出力は ~500 文字以内）
- *   - Rate limit は呼び出し元が制御する（1 秒あたり 30 メッセージ上限）
+ * 额外说明：
+ *   - Telegram 单条消息上限为 4096 字符；
+ *   - 频率限制由调用方控制，本函数只负责单次发送。
  */
 
 export type TelegramConfig = {

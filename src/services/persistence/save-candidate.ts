@@ -31,17 +31,15 @@ export type SnapshotAlertStatus =
   | "failed";
 
 /**
- * 候補保存  (PHASE_08)
+ * 候选信号持久化  (PHASE_08)
  *
- * AlertPayload を candidates テーブルに INSERT OR REPLACE で保存する。
+ * 将 `AlertPayload` 以 `INSERT OR REPLACE` 写入 `candidates` 表。
  *
- * 主キー構成:
- *   {symbol}_{direction}_{timeframe}_{entryHighInt}
- *   同一価格帯・方向・シンボルの重複シグナルを自動上書き。
+ * 主键格式：
+ *   `{symbol}_{direction}_{timeframe}_{entryHighInt}`
  *
- * alertStatus:
- *   payload.alertStatus をそのまま保存。
- *   send-alert.ts が送信後に "sent" に更新する。
+ * 相同价格区、方向和品种的重复信号会自动覆盖旧记录。
+ * `alertStatus` 初始按 payload 原值落盘，发送完成后再单独更新。
  */
 export function saveCandidate(
   db: Database.Database,
@@ -207,7 +205,7 @@ export function saveCandidateSnapshot(
 }
 
 /**
- * アラートステータスを更新する（send-alert.ts から呼び出す）。
+ * 更新候选信号的告警状态，通常由 `send-alert.ts` 在发送后调用。
  */
 export function updateAlertStatus(
   db: Database.Database,
@@ -231,6 +229,7 @@ export function updateCandidateSnapshotOutcome(
     executionReasonCode?: string;
   } = {}
 ): void {
+  // 快照保留每一次执行尝试的结果，方便复盘“为什么没有实际发出告警”。
   db.prepare(`
     UPDATE candidate_snapshots
     SET

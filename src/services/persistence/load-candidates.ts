@@ -6,15 +6,15 @@ import type { ReasonCode } from "../../domain/common/reason-code.js";
 import { buildId } from "./save-candidate.js";
 
 /**
- * 候補読み込み  (PHASE_08)
+ * 候选信号读取  (PHASE_08)
  *
- * candidates テーブルから最近の AlertPayload を読み込む。
+ * 从 `candidates` 表读取最近的 `AlertPayload` 记录。
  *
- * 用途:
- *   - 重複アラート抑制（同一シグナルが短期間に再評価された場合に再送しない）
- *   - 最終信号の監査ログ確認
+ * 主要用途：
+ *   - 抑制短时间内重复发送同一信号；
+ *   - 回看最近一次信号的完整上下文。
  *
- * limitHours: 過去 N 時間以内に作成されたレコードのみ返す（デフォルト 24h）
+ * `limitHours` 表示仅返回最近 N 小时内创建的记录，默认 24 小时。
  */
 
 type CandidateRow = {
@@ -70,7 +70,7 @@ function rowToPayload(row: CandidateRow): AlertPayload {
     reasonCodes: JSON.parse(row.reason_codes) as ReasonCode[],
   };
 
-  // marketContext はストアしていないため、最小限のプレースホルダーを返す
+  // `marketContext` 未完整持久化，因此这里只回填最小可用占位结构
   const marketContext: MarketContext = {
     regime: (row.regime as MarketContext["regime"]) ?? "trend",
     regimeConfidence: row.regime_confidence ?? 0,
@@ -108,8 +108,8 @@ export function loadRecentCandidates(
 }
 
 /**
- * 単一候補を ID で取得する（send-alert.ts の重複チェックに使用）。
- * symbol + direction + timeframe + entryHigh から ID を組み立てる。
+ * 按确定性 ID 读取单条候选记录，供告警去重检查使用。
+ * ID 由 `symbol + direction + timeframe + entryHigh` 组合生成。
  */
 export function findCandidate(
   db: Database.Database,

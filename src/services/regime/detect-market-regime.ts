@@ -127,8 +127,8 @@ export function detectMarketRegime(
   if (atrExpansion >= config.trendExtensionAtrPenaltyThreshold) {
     trendScore *= 0.55;
     trendExhausted = true;
-    // NOTE: reasons/reasonCodes pushed after priority overrides to avoid
-    // REGIME_TREND_EXHAUSTED leaking into event-driven/high-volatility results
+    // 注意：reasons / reasonCodes 要在优先级覆盖判断后再写入，
+    // 避免 REGIME_TREND_EXHAUSTED 泄漏到 event-driven / high-volatility 结果中
   }
 
   // ── 固定优先级选择 ────────────────────────────────────────────

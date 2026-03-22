@@ -47,7 +47,7 @@ logger.info({ version: VERSION }, "Stratum starting");
 const client = new CcxtClient(env.EXCHANGE_NAME, env.SPOT_SYMBOL);
 const db = openDb(env.DATABASE_URL);
 
-// グレースフルシャットダウン用 AbortController
+// 用于优雅停机的 AbortController
 const shutdownController = new AbortController();
 const shutdown = (sig: string) => {
   logger.info({ sig }, "Stratum: shutdown signal received");

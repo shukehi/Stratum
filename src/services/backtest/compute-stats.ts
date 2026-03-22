@@ -1,20 +1,14 @@
 import type { BacktestTrade, BacktestStats } from "../../domain/backtest/backtest-types.js";
 
 /**
- * バックテスト統計計算  (PHASE_10-C)
+ * 回测统计计算  (PHASE_10-C)
  *
- * 純粋関数 — 外部依存なし、副作用なし。
+ * 纯函数，无外部依赖、无副作用。
  *
- * Sharpe 比の定義（取引ベース、年率化なし）:
- *   sharpe = mean(pnlR) / std(pnlR)
- *   pnlR が 2 件未満（標準偏差が計算不能）の場合は 0 を返す。
- *
- * maxDrawdownR の定義:
- *   累積 R 曲線のピーク後の最大下落幅。
- *   例: cumR = [0, 1, 3, 1, 2, -1] → peak=3, trough=-1 → maxDD=4.0R
- *
- * winRate:
- *   wins / closedTrades。closedTrades=0 の場合は 0（ゼロ除算回避）。
+ * 指标定义：
+ *   - `sharpe = mean(pnlR) / std(pnlR)`，不做年化；
+ *   - `maxDrawdownR` 表示累计 R 曲线从峰值回落的最大幅度；
+ *   - `winRate = wins / closedTrades`，若无已平仓交易则返回 0。
  */
 export function computeStats(trades: BacktestTrade[]): BacktestStats {
   const closed = trades.filter(
@@ -42,10 +36,10 @@ export function computeStats(trades: BacktestTrade[]): BacktestStats {
   };
 }
 
-// ── 内部ヘルパー ───────────────────────────────────────────────────────────
+// ── 内部辅助 ────────────────────────────────────────────────────────────────
 
 /**
- * 累積 R 曲線の最大ドローダウンを計算する（正値で返す）。
+ * 计算累计 R 曲线的最大回撤，返回正值。
  */
 export function computeMaxDrawdown(pnls: number[]): number {
   if (pnls.length === 0) return 0;
@@ -65,8 +59,8 @@ export function computeMaxDrawdown(pnls: number[]): number {
 }
 
 /**
- * 取引単位の Sharpe 比を計算する。
- * mean(pnlR) / std(pnlR)、取引数 < 2 の場合は 0。
+ * 按交易粒度计算 Sharpe 比。
+ * 即 `mean(pnlR) / std(pnlR)`；若交易数少于 2，则返回 0。
  */
 export function computeSharpe(pnls: number[]): number {
   if (pnls.length < 2) return 0;

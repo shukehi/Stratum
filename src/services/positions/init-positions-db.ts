@@ -1,13 +1,13 @@
 import Database from "better-sqlite3";
 
 /**
- * positions テーブル初期化  (PHASE_10-B)
+ * `positions` 表初始化  (PHASE_10-B)
  *
- * id は candidates テーブルと同一フォーマット
- * （{symbol}_{direction}_{timeframe}_{floor(entryHigh)}）。
- * 同一シグナルが重複して open にならないよう PRIMARY KEY で制御。
+ * `id` 与 `candidates` 表保持同一确定性格式：
+ *   `{symbol}_{direction}_{timeframe}_{floor(entryHigh)}`
  *
- * pnl_r / close_price / closed_at は平仓後に UPDATE で書き込む。
+ * 这样同一信号重复进入时，不会写出多条同时处于 `open` 的仓位记录。
+ * `pnl_r`、`close_price`、`closed_at` 会在平仓时通过 `UPDATE` 补写。
  */
 export function initPositionsDb(db: Database.Database): void {
   db.exec(`
@@ -55,6 +55,7 @@ function ensureColumn(
   columnName: string,
   definition: string
 ): void {
+  // 启动时做轻量级 schema 补齐，保证历史数据库也能平滑升级。
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   if (columns.some((column) => column.name === columnName)) return;
   db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);

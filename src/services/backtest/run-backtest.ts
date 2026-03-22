@@ -68,44 +68,32 @@ export type FullChainBacktestInput = {
 };
 
 /**
- * バックテストエンジン  (PHASE_10-C)
+ * 回测引擎  (PHASE_10-C)
  *
- * 設計:
- *   1. generateBacktestSignals — ウォークフォワードで構造シグナルを検出
- *   2. runBacktest              — シグナルリストを受け取り取引をシミュレート
+ * 设计分为两部分：
+ *   1. `generateBacktestSignals`：按时间向前推进，逐步检测结构信号；
+ *   2. `runBacktest`：接收信号列表，按后续 K 线逐笔模拟交易结果。
  *
- * エントリー価格戦略（保守的最悪フィル）:
- *   long:  entryHigh で買い（エントリーゾーンの上端 = 最も高い価格）
- *   short: entryLow  で売り（エントリーゾーンの下端 = 最も低い価格）
+ * 入场价格采用保守最差成交假设：
+ *   - 做多用 `entryHigh`；
+ *   - 做空用 `entryLow`。
  *
- * エグジット判定（各後続足で順番にチェック）:
- *   long:  candle.low <= stopLoss → SL; candle.high >= takeProfit → TP
- *   short: candle.high >= stopLoss → SL; candle.low  <= takeProfit → TP
- *   同一足で SL/TP 両方ヒット → SL 優先（保守的）
- *
- * pnlR 計算:
- *   entryMid = (entryLow + entryHigh) / 2
- *   risk = |entryMid - stopLoss|
- *   long  pnlR = (exitPrice - entryMid) / risk
- *   short pnlR = (entryMid - exitPrice) / risk
+ * 出场判定按每根后续 K 线顺序检查：
+ *   - 做多：`low <= stopLoss` 先判止损，`high >= takeProfit` 判止盈；
+ *   - 做空：`high >= stopLoss` 先判止损，`low <= takeProfit` 判止盈；
+ *   - 同一根 K 线同时触发 TP/SL 时，优先按 SL 处理。
  */
 
-// ── ウォークフォワード信号生成 ──────────────────────────────────────────────
+// ── Walk-forward 信号生成 ──────────────────────────────────────────────────
 
 /**
- * ウォークフォワード方式でバックテスト用シグナルを生成する。
+ * 以 walk-forward 方式生成回测信号。
  *
- * 各 4h 足の境界で構造検出を実行し、新規シグナルを収集する。
- * 検出には `detectStructuralSetups` を使用するが、
- * マクロ・レジーム・参与者ゲートはバイパスし、
- * 純粋に構造的セットアップの検出能力をテストする。
+ * 在每个 4h 边界只使用“当时已经可见”的数据执行结构检测，
+ * 从而尽量贴近实时扫描的因果顺序。
  *
- * 重複排除: 同一の (direction, entryHigh) ペアは 1 回のみ記録する。
- *
- * @param candles4h 4h 足（時系列昇順）
- * @param candles1h 1h 足（confirmEntry に使用）
- * @param config    StrategyConfig
- * @param minHistory 検出開始に必要な最小 4h 足数（デフォルト 50）
+ * 这里会绕过宏观、状态和参与者硬门槛，只测试结构检测本身的产出能力。
+ * 去重规则为：相同 `(direction, entryHigh)` 组合只保留一次。
  */
 export function generateBacktestSignals(
   candles4h: Candle[],
@@ -116,7 +104,7 @@ export function generateBacktestSignals(
   const signals: BacktestSignal[] = [];
   const seenKeys = new Set<string>();
 
-  // Fix 5: 等高等低检测提前到循环外，避免每次迭代重复执行 O(n log n) 排序
+  // 修复 5：把等高等低检测提到循环外，避免每次迭代重复执行 O(n log n) 排序
   // 注：使用全量 candles4h 预计算，存在轻微前视偏差（future swings included）；
   // 对价格结构型区域影响可忽略，换取 O(n²) → O(n²/n log n) 的回测性能提升。
   const precomputedEqualLevels: EqualLevel[] = [
@@ -124,7 +112,7 @@ export function generateBacktestSignals(
     ...detectEqualLows(candles4h, config.equalLevelTolerance),
   ];
 
-  // レジーム/参与者ゲートをバイパスする中立 MarketContext
+  // 构造一个中性 MarketContext，专门用于绕过状态层和参与者层门槛
   const neutralCtx: MarketContext = {
     regime: "trend",
     regimeConfidence: 1,
@@ -364,16 +352,13 @@ export async function generateFullChainBacktestSignals(
   return records;
 }
 
-// ── 取引シミュレーション ────────────────────────────────────────────────────
+// ── 交易模拟 ────────────────────────────────────────────────────────────────
 
 /**
- * シグナルリストを candles に対してシミュレートし、BacktestTrade[] を返す。
+ * 按给定 K 线序列逐笔模拟交易，返回 `BacktestTrade[]`。
  *
- * 各シグナルのエントリー足の次の足から走査を開始する。
- * データ終端まで決済できなかった取引は status="expired" として記録する。
- *
- * @param signals 検出済みシグナル（generateBacktestSignals の出力など）
- * @param candles シミュレーション用足データ（4h を推奨）
+ * 每笔交易都从其入场触发那根 K 线的下一根开始检查。
+ * 若直到数据尾部仍未触发平仓，则记为 `expired`。
  */
 export function runBacktest(
   signals: BacktestSignal[],
@@ -382,7 +367,7 @@ export function runBacktest(
   return signals.map((signal) => simulateTrade(signal, candles));
 }
 
-// ── 内部実装 ───────────────────────────────────────────────────────────────
+// ── 内部实现 ────────────────────────────────────────────────────────────────
 
 function simulateTrade(signal: BacktestSignal, candles: Candle[]): BacktestTrade {
   const entryPrice =
@@ -391,7 +376,7 @@ function simulateTrade(signal: BacktestSignal, candles: Candle[]): BacktestTrade
   const entryMid = (signal.entryLow + signal.entryHigh) / 2;
   const risk = Math.abs(entryMid - signal.stopLoss);
 
-  // エントリー足の次から走査
+  // 从入场触发后的下一根 K 线开始扫描
   const scanStart = signal.candleIndex + 1;
 
   for (let i = scanStart; i < candles.length; i++) {
@@ -402,7 +387,7 @@ function simulateTrade(signal: BacktestSignal, candles: Candle[]): BacktestTrade
       const tpHit = c.high >= signal.takeProfit;
 
       if (slHit || tpHit) {
-        // 同一足で両方ヒット → SL 優先（保守的）
+        // 同一根 K 线同时命中止盈止损时，优先按止损处理
         const status: BacktestTradeStatus = slHit ? "closed_sl" : "closed_tp";
         const exitPrice = slHit ? signal.stopLoss : signal.takeProfit;
         const pnlR = risk > 0 ? (exitPrice - entryMid) / risk : 0;
@@ -421,7 +406,7 @@ function simulateTrade(signal: BacktestSignal, candles: Candle[]): BacktestTrade
     }
   }
 
-  // データ終端 — 最終足の終値で強制決済
+  // 到达数据尾部仍未出场时，按最后一根收盘价强制结算
   const lastCandle = candles[candles.length - 1];
   const exitPrice = lastCandle?.close ?? entryPrice;
   const pnlR =

@@ -42,66 +42,66 @@ import { buildPositionSizingSummary } from "../risk/compute-position-size.js";
 import { evaluateExposureGate } from "../risk/evaluate-exposure-gate.js";
 
 /**
- * ワークフロー・オーケストレーター  (PHASE_09)
+ * 信号扫描工作流编排器  (PHASE_09)
  *
- * 単一シンボルに対して PHASE_03〜08 をフルパイプラインで実行する。
+ * 针对单一交易品种串起 PHASE_03～08 的完整流水线。
  *
- * パイプライン順序（第一性原理）:
- *   [PARALLEL] 4h/1h OHLCV + ファンディング + OI + スポット価格 + ニュース
- *   PHASE_03  detectMarketRegime       → RegimeDecision
+ * 执行顺序（按因果链组织）：
+ *   [并行] 4h/1h/1d K 线 + 资金费率 + OI + 现货价格 + 新闻
+ *   PHASE_03  detectMarketRegime        → RegimeDecision
  *   PHASE_04  assessParticipantPressure → ParticipantPressure
  *             buildMarketContext        → MarketContext
- *             isTradableContext         → pre-structure gate
- *   PHASE_05  detectStructuralSetups   → StructuralSetup[]
- *   PHASE_06  evaluateConsensus        → TradeCandidate[]
- *   PHASE_07  assessMacroOverlay       → MacroOverlayDecision (per candidate)
- *             applyMacroOverlay        → TradeCandidate[] (filtered per candidate)
- *   PHASE_08  saveCandidate + sendAlert → DB + Telegram
+ *             isTradableContext         → 结构层前置硬门控
+ *   PHASE_05  analyzeStructuralSetups   → StructuralSetup[]
+ *   PHASE_06  analyzeConsensus          → TradeCandidate[]
+ *   PHASE_07  assessMacroOverlay        → MacroOverlayDecision
+ *             applyMacroOverlay         → 过滤后的 TradeCandidate[]
+ *   PHASE_08  saveCandidate + sendAlert → 数据库落盘 + Telegram 推送
  *
- * エラー分離ポリシー:
- *   - 取引所データ取得失敗  → throw（パイプライン続行不可）
- *   - ニュース取得失敗      → 空配列で継続（errors に追記）
- *   - マクロ評価失敗        → 全候補をそのまま通過させて継続（errors に追記）
- *   - Telegram 送信失敗     → "failed" ステータスで保存（errors に追記）
+ * 错误隔离策略：
+ *   - 交易所主数据获取失败：直接抛错，流程终止；
+ *   - 新闻获取失败：降级为空数组并继续；
+ *   - 宏观评估失败：让候选直接通过并继续；
+ *   - Telegram 发送失败：保留 failed 状态并记录错误。
  *
- * 重複アラート抑制:
- *   sendAlert 前に findCandidate を照会し、alertStatus === "sent" の場合は
- *   スキップ（alertsSkipped に計上）。"failed" / "pending" は再送を試みる。
+ * 去重策略：
+ *   在发出告警前查询历史候选，若同一信号已成功发送，则本轮跳过；
+ *   若上次是 pending 或 failed，则允许重试发送。
  */
 
 // ── 公開型 ─────────────────────────────────────────────────────────────────
 
 export type ScanDeps = {
-  /** 取引所クライアント（ccxt ラッパー） */
+  /** 交易所客户端（通常为 ccxt 封装）。 */
   client: ExchangeClient;
-  /** SQLite DB インスタンス（テストでは :memory: を使用） */
+  /** SQLite 数据库实例，测试环境可传入 `:memory:`。 */
   db: Database.Database;
-  /** LLM 呼び出し関数（テストでは vi.fn() を注入） */
+  /** LLM 调用函数，测试中通常注入 mock。 */
   llmCall: LlmCallFn;
-  /** Telegram 送信用 fetch（省略時はグローバル fetch） */
+  /** Telegram 发送所用的 fetch，未传入时退回全局实现。 */
   httpFetch?: HttpFetchFn;
-  /** Telegram Bot トークンとチャット ID */
+  /** Telegram Bot 配置。 */
   telegramConfig: TelegramConfig;
-  /** NewsAPI キー（空文字の場合はニュース取得をスキップ） */
+  /** NewsAPI 密钥；为空时跳过新闻抓取。 */
   newsApiKey?: string;
-  /** ニュース取得関数（テスト用オーバーライド、デフォルト: fetchNews） */
+  /** 新闻获取函数，便于测试时替换。 */
   fetchNewsFn?: (apiKey: string, maxItems: number) => Promise<NewsItem[]>;
 };
 
 export type SignalScanResult = {
   symbol: string;
   scannedAt: number;
-  /** PHASE_06 後の候補数（マクロフィルタ前） */
+  /** PHASE_06 输出的候选数，即宏观过滤前数量。 */
   candidatesFound: number;
-  /** PHASE_07 後の候補数（マクロフィルタ後） */
+  /** PHASE_07 之后剩余的候选数，即宏观过滤后数量。 */
   candidatesAfterMacro: number;
-  /** 送信成功数 */
+  /** 告警发送成功数。 */
   alertsSent: number;
-  /** 送信失敗数 */
+  /** 告警发送失败数。 */
   alertsFailed: number;
-  /** 重複スキップ数（既に "sent" の候補） */
+  /** 因重复而跳过的告警数。 */
   alertsSkipped: number;
-  /** マクロ評価アクション */
+  /** 宏观评估最终动作。 */
   macroAction: "pass" | "downgrade" | "block" | "error";
   skipStage?: "context_gate" | "structure" | "consensus" | "macro";
   skipReasonCode?: ReasonCode;
@@ -112,11 +112,11 @@ export type SignalScanResult = {
   basisDivergence?: boolean;
   marketDriverType?: string;
   liquiditySession?: string;
-  /** 非致命的エラーのメッセージリスト */
+  /** 非致命错误列表，供日志和报表回看。 */
   errors: string[];
 };
 
-// ── メイン関数 ─────────────────────────────────────────────────────────────
+// ── 主函数 ──────────────────────────────────────────────────────────────────
 
 export async function runSignalScan(
   symbol: string,
@@ -139,9 +139,8 @@ export async function runSignalScan(
 
   logger.info({ symbol }, "PHASE_09: signal scan started");
 
-  // ── [PARALLEL] 市場データ + ニュース ──────────────────────────────────────
-  // 取引所データ失敗は致命的（Promise.all がそのまま throw）。
-  // ニュース失敗は非致命的（catch して空配列を返す）。
+  // ── [并行] 市场数据与新闻 ────────────────────────────────────────────────
+  // 交易所主数据失败属于致命问题，直接中断；新闻失败仅降级，不阻塞主链路。
   const [candles4h, candles1h, candles1d, fundingRates, openInterest, spotTicker, news] =
     await Promise.all([
       fetchMarketData(client, symbol, "4h", config.marketDataLimit),
@@ -208,7 +207,7 @@ export async function runSignalScan(
     "PHASE_18 order flow CVD"
   );
 
-  // ── baselineAtr（近 50 本 4h 足の平均 Hi-Lo 幅）─────────────────────────
+  // ── baselineAtr（最近 50 根 4h K 线的平均高低波幅）──────────────────────
   const baselineWindow = candles4h.slice(-50);
   const baselineAtr =
     baselineWindow.length > 0
@@ -216,7 +215,7 @@ export async function runSignalScan(
         baselineWindow.length
       : 0;
 
-  // ── PHASE_03: 市場レジーム検出 ─────────────────────────────────────────
+  // ── PHASE_03: 市场状态识别 ─────────────────────────────────────────────
   const regimeDecision = detectMarketRegime(candles4h, config, {
     fundingRates,
     openInterest,
@@ -232,7 +231,7 @@ export async function runSignalScan(
     "PHASE_03 done"
   );
 
-  // ── PHASE_04: 参加者圧力 + マーケットコンテキスト ──────────────────────
+  // ── PHASE_04: 参与者压力 + 市场上下文 ─────────────────────────────────
   const pressure = assessParticipantPressure(
     candles4h,
     fundingRates,
@@ -277,13 +276,13 @@ export async function runSignalScan(
     return gatedResult;
   }
 
-  // ── PHASE_05: 構造トリガー検出 ────────────────────────────────────────
+  // ── PHASE_05: 结构触发检测 ─────────────────────────────────────────────
   const structuralAnalysis = analyzeStructuralSetups(candles4h, candles1h, ctx, config);
   const setups = structuralAnalysis.setups;
   logger.debug({ setupCount: setups.length }, "PHASE_05 done");
 
-  // ── PHASE_06: コンセンサス & リスクエンジン ───────────────────────────
-  // PHASE_10-B: DB から実際の開仓数を取得して相関性暴露制限を実効化
+  // ── PHASE_06: 共识与风险引擎 ───────────────────────────────────────────
+  // PHASE_10-B: 从数据库读取真实开仓数，使相关性暴露限制真正生效
   const openLongExposure = getOpenRiskSummary(db, "long");
   const openShortExposure = getOpenRiskSummary(db, "short");
   const portfolioExposure = getOpenRiskSummary(db);
@@ -301,7 +300,7 @@ export async function runSignalScan(
   const candidatesFound = candidates.length;
   logger.info({ symbol, candidatesFound }, "PHASE_06 done");
 
-  // 候補がゼロならマクロ評価・アラート送信は不要
+  // 候选数为零时，无需继续做宏观评估和告警发送
   if (candidatesFound === 0) {
     logger.info({ symbol }, "PHASE_09: no candidates, scan complete");
     const emptyResult: SignalScanResult = {
@@ -331,7 +330,7 @@ export async function runSignalScan(
     return emptyResult;
   }
 
-  // ── PHASE_07: マクロオーバーレイ ──────────────────────────────────────
+  // ── PHASE_07: 宏观覆盖层 ───────────────────────────────────────────────
   let macroAction: SignalScanResult["macroAction"] = "pass";
   let macroResults: Array<{
     candidate: (typeof candidates)[number];
@@ -376,7 +375,7 @@ export async function runSignalScan(
       decision: null,
       filtered: [candidate],
     }));
-    // マクロ評価失敗 → 全候補を通過させて続行（保守的フォールバック）
+    // 宏观评估失败时，让所有候选直接通过并继续执行
     logger.warn({ err }, "Macro overlay failed, proceeding with all candidates");
   }
 
@@ -429,7 +428,7 @@ export async function runSignalScan(
       continue;
     }
 
-    // ── PHASE_08: 永続化 + アラート送信 ────────────────────────────────
+    // ── PHASE_08: 持久化与告警发送 ───────────────────────────────────────
     const candidate = result.filtered[0];
     const executionExposureGate = evaluateExposureGate({
       sameDirectionExposureCount: sameDirectionExposure.openCount,
@@ -454,7 +453,7 @@ export async function runSignalScan(
       continue;
     }
 
-    // 重複チェック: 同一シグナルが既に "sent" の場合はスキップ
+    // 去重检查：同一信号若已成功发送，则本轮跳过
     const existing = findCandidate(
       db,
       candidate.symbol,
@@ -491,7 +490,7 @@ export async function runSignalScan(
       positionSizing,
     });
 
-    // Telegram アラート送信
+    // 发送 Telegram 告警
     const ok = await sendAlert(payload, telegramConfig, httpFetch, {
       positionSizing,
     });
@@ -510,7 +509,7 @@ export async function runSignalScan(
 
     if (ok) {
       alertsSent++;
-      // PHASE_10-B: アラート送信成功 → 仓位を記録（相関性暴露カウントを更新）
+      // PHASE_10-B: 告警发送成功后记录仓位，并更新暴露度统计
       openPosition(db, candidate, scannedAt, {
         recommendedPositionSize: positionSizing.recommendedPositionSize,
         recommendedBaseSize: positionSizing.recommendedBaseSize,

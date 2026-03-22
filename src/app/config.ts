@@ -1,10 +1,11 @@
 /**
- * StrategyConfig は明示的な型定義を持つ。
- * boolean / number フィールドは widened 型（テスト時のオーバーライドを許容）。
- * 文字列 union 型（timeframe）は具体的な値を保持する。
+ * `StrategyConfig` 是系统策略参数的统一类型定义。
  *
- * strategyConfig は `as const satisfies StrategyConfig` で定義することで
- * リテラル型（literal inference）を維持しつつ、型の互換性チェックも保証する。
+ * 设计要点：
+ *   - `boolean` / `number` 字段保持可拓宽类型，便于测试时局部覆写；
+ *   - 字符串联合类型字段保留具体字面量，防止传入非法周期；
+ *   - `strategyConfig` 通过 `as const satisfies StrategyConfig` 声明，
+ *     同时获得字面量推导与类型兼容性校验。
  */
 export type StrategyConfig = {
   // --- 周期与数据 ---

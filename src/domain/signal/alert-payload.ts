@@ -1,4 +1,4 @@
-// PHASE_02 FROZEN - do not modify fields
+// PHASE_02 已冻结：不要修改字段定义
 import type { TradeCandidate } from "./trade-candidate.js";
 import type { MarketContext } from "../market/market-context.js";
 

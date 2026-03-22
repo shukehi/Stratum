@@ -1,4 +1,4 @@
-// PHASE_02 FROZEN - do not modify the union type
+// PHASE_02 已冻结：不要修改该联合类型
 export type ReasonCode =
   | "REGIME_LOW_CONFIDENCE"
   | "REGIME_AMBIGUOUS"
