@@ -8,6 +8,35 @@ cd "$ROOT_DIR"
 PNPM_VERSION="9.15.2"
 SERVICE_NAME="${SERVICE_NAME:-stratum.service}"
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+LOG_DIR="${ROOT_DIR}/logs"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+LOG_FILE="${LOG_DIR}/update-${RUN_ID}.log"
+
+mkdir -p "$LOG_DIR"
+touch "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+on_error() {
+  local exit_code=$?
+  echo
+  echo "Update failed with exit code ${exit_code}."
+  echo "Log file: ${LOG_FILE}"
+  echo
+  echo "Last 40 log lines:"
+  tail -n 40 "$LOG_FILE" || true
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$SERVICE_NAME" >/dev/null 2>&1; then
+    echo
+    echo "Last 40 lines from ${SERVICE_NAME}:"
+    if [[ "${EUID}" -eq 0 ]]; then
+      journalctl -u "$SERVICE_NAME" -n 40 --no-pager || true
+    else
+      sudo journalctl -u "$SERVICE_NAME" -n 40 --no-pager || true
+    fi
+  fi
+  exit "$exit_code"
+}
+
+trap on_error ERR
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required."
@@ -52,6 +81,9 @@ echo "Running verification..."
 "${PNPM_CMD[@]}" test
 "${PNPM_CMD[@]}" build
 
+echo "Update succeeded."
+echo "Log file: ${LOG_FILE}"
+
 if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$SERVICE_NAME" >/dev/null 2>&1; then
   echo "Restarting $SERVICE_NAME..."
   if [[ "${EUID}" -eq 0 ]]; then
@@ -69,6 +101,7 @@ else
   cat <<EOF
 
 Update complete.
+Log file: ${LOG_FILE}
 
 No systemd unit named '$SERVICE_NAME' was detected.
 If you run Stratum manually, start it with:

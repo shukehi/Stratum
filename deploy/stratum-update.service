@@ -1,0 +1,10 @@
+[Unit]
+Description=Stratum update workflow
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__WORKDIR__
+ExecStart=/bin/bash __WORKDIR__/scripts/update-vps.sh

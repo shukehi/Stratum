@@ -12,7 +12,7 @@ pnpm dev
 
 ## VPS 部署与测试
 
-> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/update-vps.sh`、`scripts/install-systemd-service.sh`、`deploy/stratum.service`。
+> 仓库内已提供最小可用部署资产：`.env.example`、`scripts/deploy-vps.sh`、`scripts/update-vps.sh`、`scripts/install-systemd-service.sh`、`scripts/install-systemd-update-timer.sh`、`deploy/stratum.service`。
 
 ### 1. VPS 基础环境
 
@@ -96,11 +96,32 @@ bash ./scripts/update-vps.sh
 6. 运行 `pnpm build`
 7. 检测到 `stratum.service` 时自动重启
 
+每次执行都会把完整输出写入 `logs/update-*.log`。如果中途失败，脚本会自动打印：
+
+1. 当前更新日志最后 40 行
+2. `stratum.service` 最近 40 行 journal 日志（如果服务存在）
+
 如果你的 systemd 单元名不是 `stratum.service`，可这样运行：
 
 ```bash
 SERVICE_NAME=my-stratum.service bash ./scripts/update-vps.sh
 ```
+
+### 7. 安装自动更新定时器
+
+```bash
+cd /opt/stratum
+sudo ./scripts/install-systemd-update-timer.sh
+systemctl list-timers --all | grep stratum-update
+```
+
+默认计划：
+
+1. 每天本地时间 `05:15`
+2. 最多随机延迟 `10` 分钟，避免固定时刻冲击
+3. 机器离线错过后，下次开机自动补跑
+
+定时器模板位于 `deploy/stratum-update.timer`，服务模板位于 `deploy/stratum-update.service`。
 
 ---
 
