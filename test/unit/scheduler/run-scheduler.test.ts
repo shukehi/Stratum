@@ -18,7 +18,6 @@ describe("run-scheduler (V2 Physics)", () => {
     const mockMonitor = vi.fn().mockResolvedValue({ closed: 0 });
     const controller = new AbortController();
 
-    // 运行一个极短的循环
     setTimeout(() => controller.abort(), 100);
 
     await runScheduler(

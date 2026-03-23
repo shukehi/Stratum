@@ -28,7 +28,7 @@ describe("compute-position-size (V2 Physics)", () => {
     const c = makeCandidate();
     const result = buildPositionSizingSummary({
       candidate: c,
-      config: { ...strategyConfig, accountSize: 10000, riskPerTrade: 0.01 },
+      config: { ...strategyConfig, accountSizeUsd: 10000, riskPerTrade: 0.01 },
       sameDirectionExposureCount: 0,
       sameDirectionOpenRiskPercent: 0,
       portfolioOpenRiskPercent: 0,

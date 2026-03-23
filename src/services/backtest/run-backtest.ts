@@ -60,10 +60,6 @@ export type FullChainBacktestInput = {
   minHistory?: number;
 };
 
-/**
- * 回测引擎 (V2 Physics - Total Alignment)
- */
-
 export function generateBacktestSignals(
   candles4h: Candle[],
   candles1h: Candle[],
@@ -172,7 +168,16 @@ export async function generateFullChainBacktestSignals(
 
       if (swappingGate.action === "block") {
         records.push({
-          signal: candidate as any,
+          signal: {
+            candleIndex: i,
+            direction: candidate.direction,
+            entryHigh: candidate.entryHigh,
+            entryLow: candidate.entryLow,
+            stopLoss: candidate.stopLoss,
+            takeProfit: candidate.takeProfit,
+            structureScore: 0,
+            structureReason: candidate.structureReason
+          },
           alertStatus: "skipped_execution_gate",
           confirmationStatus: "confirmed",
           regime: ctx.regime,
@@ -188,7 +193,16 @@ export async function generateFullChainBacktestSignals(
       const key = `${candidate.direction}_${Math.floor(candidate.entryHigh)}`;
       if (sentKeys.has(key)) {
         records.push({
-          signal: candidate as any,
+          signal: {
+            candleIndex: i,
+            direction: candidate.direction,
+            entryHigh: candidate.entryHigh,
+            entryLow: candidate.entryLow,
+            stopLoss: candidate.stopLoss,
+            takeProfit: candidate.takeProfit,
+            structureScore: 0,
+            structureReason: candidate.structureReason
+          },
           alertStatus: "skipped_duplicate",
           confirmationStatus: "confirmed",
           regime: ctx.regime,
@@ -202,8 +216,19 @@ export async function generateFullChainBacktestSignals(
       }
 
       sentKeys.add(key);
+      const backtestSignal: BacktestSignal = {
+        candleIndex: i,
+        direction: candidate.direction,
+        entryHigh: candidate.entryHigh,
+        entryLow: candidate.entryLow,
+        stopLoss: candidate.stopLoss,
+        takeProfit: candidate.takeProfit,
+        structureScore: 0,
+        structureReason: candidate.structureReason
+      };
+
       records.push({
-        signal: candidate as any,
+        signal: backtestSignal,
         alertStatus: "sent",
         confirmationStatus: "confirmed",
         regime: ctx.regime,
@@ -254,18 +279,17 @@ function simulateTrade(
 ): BacktestTrade | null {
   const { candleIndex, direction, entryHigh, entryLow, stopLoss, takeProfit } = signal;
   const entryPrice = direction === "long" ? entryHigh : entryLow;
-  const openedAt = candles4h[candleIndex].timestamp;
 
   for (let j = candleIndex + 1; j < candles4h.length; j++) {
     const c = candles4h[j];
     if (direction === "long") {
-      if (c.low <= stopLoss) return finalizeTrade(signal, entryPrice, stopLoss, "closed_sl", openedAt, c.timestamp);
-      if (c.high >= takeProfit) return finalizeTrade(signal, entryPrice, takeProfit, "closed_tp", openedAt, c.timestamp);
+      if (c.low <= stopLoss) return finalizeTrade(signal, entryPrice, stopLoss, "closed_sl", j);
+      if (c.high >= takeProfit) return finalizeTrade(signal, entryPrice, takeProfit, "closed_tp", j);
     } else {
-      if (c.high >= stopLoss) return finalizeTrade(signal, entryPrice, stopLoss, "closed_sl", openedAt, c.timestamp);
-      if (c.low <= takeProfit) return finalizeTrade(signal, entryPrice, takeProfit, "closed_tp", openedAt, c.timestamp);
+      if (c.high >= stopLoss) return finalizeTrade(signal, entryPrice, stopLoss, "closed_sl", j);
+      if (c.low <= takeProfit) return finalizeTrade(signal, entryPrice, takeProfit, "closed_tp", j);
     }
-    if (j - candleIndex > 50) return finalizeTrade(signal, entryPrice, c.close, "closed_sl", openedAt, c.timestamp);
+    if (j - candleIndex > 50) return finalizeTrade(signal, entryPrice, c.close, "expired", j);
   }
   return null;
 }
@@ -275,8 +299,7 @@ function finalizeTrade(
   entryPrice: number,
   exitPrice: number,
   status: BacktestTradeStatus,
-  openedAt: number,
-  closedAt: number
+  exitCandleIndex: number
 ): BacktestTrade {
   const risk = Math.abs(entryPrice - signal.stopLoss);
   const pnlR = risk > 0
@@ -284,11 +307,12 @@ function finalizeTrade(
     : 0;
 
   return {
-    ...signal,
-    closedAt,
+    signal,
+    entryPrice,
     exitPrice,
-    pnlR,
+    exitCandleIndex,
     status,
+    pnlR,
   };
 }
 

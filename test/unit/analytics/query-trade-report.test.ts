@@ -5,7 +5,6 @@ import { initPositionsDb } from "../../../src/services/positions/init-positions-
 import { saveScanLog } from "../../../src/services/persistence/save-scan-log.js";
 import {
   saveCandidateSnapshot,
-  updateCandidateSnapshotOutcome,
 } from "../../../src/services/persistence/save-candidate.js";
 import { openPosition, closePosition } from "../../../src/services/positions/track-position.js";
 import {
@@ -16,20 +15,6 @@ import {
   getRecentScanLogs,
   getExecutionFunnelStats,
   getOpenExposureByDirection,
-  getRecentRiskSnapshots,
-  getScanBreakdownByRegime,
-  getScanBreakdownByParticipantPressure,
-  getCandidateSnapshotBreakdownByConfirmationStatus,
-  getCandidateSnapshotBreakdownByExecutionOutcome,
-  getCandidateSnapshotBreakdownByExecutionReason,
-  getExecutionBreakdownByRegime,
-  getExecutionBreakdownByParticipantPressure,
-  getOutcomeBreakdownByRegime,
-  getOutcomeBreakdownByParticipantPressure,
-  getOutcomeBreakdownByDailyBias,
-  getOutcomeBreakdownByOrderFlowBias,
-  getOutcomeBreakdownByLiquiditySession,
-  getOutcomeWindowRows,
 } from "../../../src/services/analytics/query-trade-report.js";
 import type { SignalScanResult } from "../../../src/services/orchestrator/run-signal-scan.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";

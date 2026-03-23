@@ -95,8 +95,8 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
     printTable(
       ["阶段", "数量"],
       [
-        ["已开仓", String(funnel.openPositions)],
-        ["已平仓", String(funnel.closedPositions)],
+        { "阶段": "已开仓", "数量": String(funnel.openPositions) },
+        { "阶段": "已平仓", "数量": String(funnel.closedPositions) },
       ]
     );
   }
@@ -110,12 +110,12 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
     } else {
       printTable(
         ["方向", "仓位数", "风险额(USD)", "风险占比"],
-        exposures.map((e) => [
-          e.label,
-          String(e.openCount),
-          `$${e.openRiskAmount.toFixed(2)}`,
-          fmtPct(e.openRiskPercent),
-        ])
+        exposures.map((e) => ({
+          "方向": e.label,
+          "仓位数": String(e.openCount),
+          "风险额(USD)": `$${e.openRiskAmount.toFixed(2)}`,
+          "风险占比": fmtPct(e.openRiskPercent),
+        }))
       );
     }
   }
@@ -126,28 +126,30 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
     const logs = getRecentScanLogs(db, logLimit);
     printTable(
       ["时间", "品种", "状态", "OI Index", "信号", "Sent"],
-      logs.map((l) => [
-        fmtTime(l.scannedAt),
-        l.symbol,
-        l.regime || "n/a",
-        l.orderFlowBias || "n/a",
-        String(l.candidatesFound),
-        String(l.alertsSent),
-      ])
+      logs.map((l) => ({
+        "时间": fmtTime(l.scannedAt),
+        "品种": l.symbol,
+        "状态": l.regime || "n/a",
+        "OI Index": l.orderFlowBias || "n/a",
+        "信号": String(l.candidatesFound),
+        "Sent": String(l.alertsSent),
+      }))
     );
   }
 
   console.log();
 }
 
-function winRateToRow(r: WinRateRow): string[] {
-  return [
-    r.label,
-    String(r.count),
-    fmtPct(r.winRate),
-    fmtR(r.avgPnlR),
-    fmtR(r.totalR),
-  ];
+function winRateToRow(r: WinRateRow): Record<string, string> {
+  return {
+    "CVS": r.label,
+    "方向": r.label,
+    "结构": r.label,
+    "笔数": String(r.count),
+    "胜率": fmtPct(r.winRate),
+    "平均R": fmtR(r.avgPnlR),
+    "总R": fmtR(r.totalR),
+  };
 }
 
 function parseLogLimit(args: string[]): number | null {
