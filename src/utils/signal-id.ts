@@ -1,10 +1,8 @@
 /**
- * 生成跨模块复用的信号主键。
- *
- * 设计目标：
- *   - `candidates` 与 `positions` 使用完全一致的 ID 规则；
- *   - 避免低价资产在 `Math.floor(entryHigh)` 下全部退化为 `0`；
- *   - 对高价与低价资产都保留稳定且足够的价格精度。
+ * 信号唯一标识生成器 (V2 Physics)
+ * 
+ * 物理准则：
+ *   同一品种、同一方向、同一时间框架在同一价格点发出的信号应具有相同的物理指纹。
  */
 export function buildSignalId(
   symbol: string,
@@ -12,5 +10,7 @@ export function buildSignalId(
   timeframe: string,
   entryHigh: number
 ): string {
-  return `${symbol}_${direction}_${timeframe}_${entryHigh.toFixed(8)}`;
+  // 标准化价格，保留 8 位小数以防浮点数抖动
+  const priceKey = entryHigh.toFixed(8);
+  return `${symbol}_${direction}_${timeframe}_${priceKey}`;
 }

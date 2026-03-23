@@ -5,6 +5,10 @@ import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import type { PositionSizingSummary } from "../../domain/signal/position-sizing.js";
 import { buildSignalId } from "../../utils/signal-id.js";
 
+/**
+ * 候选信号持久化逻辑 (V2 Physics)
+ */
+
 export type CandidatePersistenceMeta = {
   confirmationStatus?: "pending" | "confirmed" | "invalidated";
   dailyBias?: DailyBias;
@@ -30,17 +34,31 @@ export type SnapshotAlertStatus =
   | "sent"
   | "failed";
 
-/**
- * 候选信号持久化  (PHASE_08)
- *
- * 将 `AlertPayload` 以 `INSERT OR REPLACE` 写入 `candidates` 表。
- *
- * 主键格式：
- *   `{symbol}_{direction}_{timeframe}_{entryHighInt}`
- *
- * 相同价格区、方向和品种的重复信号会自动覆盖旧记录。
- * `alertStatus` 初始按 payload 原值落盘，发送完成后再单独更新。
- */
+export type CandidateSnapshotRow = {
+  id: number;
+  candidateId: string;
+  baseCandidateId: string;
+  symbol: string;
+  direction: "long" | "short";
+  timeframe: "4h" | "1h";
+  capitalVelocityScore: number;
+  alertStatus: SnapshotAlertStatus;
+  confirmationStatus: string | null;
+  regime: string | null;
+  participantPressureType: string | null;
+  dailyBias: string | null;
+  orderFlowBias: string | null;
+  basisDivergence: boolean;
+  liquiditySession: string | null;
+  deliveryStartedAt: number | null;
+  deliveryCompletedAt: number | null;
+  executionOutcome: SnapshotExecutionOutcome | null;
+  executionReasonCode: string | null;
+  createdAt: number;
+};
+
+// ── 写入操作 ────────────────────────────────────────────────────────────────
+
 export function saveCandidate(
   db: Database.Database,
   payload: AlertPayload,
@@ -51,11 +69,11 @@ export function saveCandidate(
   const id = buildId(c.symbol, c.direction, c.timeframe, c.entryHigh);
   const now = Date.now();
 
-  const stmt = db.prepare(`
+  db.prepare(`
     INSERT OR REPLACE INTO candidates (
       id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
-      signal_grade, regime_aligned, participant_aligned,
+      capital_velocity_score, regime_aligned, participant_aligned,
       structure_reason, context_reason,
       reason_codes, alert_status, created_at, updated_at,
       recommended_position_size, recommended_base_size, risk_amount, account_risk_percent,
@@ -82,12 +100,10 @@ export function saveCandidate(
       ?, ?, ?,
       ?, ?
     )
-  `);
-
-  stmt.run(
+  `).run(
     id, c.symbol, c.direction, c.timeframe,
     c.entryLow, c.entryHigh, c.stopLoss, c.takeProfit, c.riskReward,
-    c.signalGrade, c.regimeAligned ? 1 : 0, c.participantAligned ? 1 : 0,
+    c.capitalVelocityScore, c.regimeAligned ? 1 : 0, c.participantAligned ? 1 : 0,
     c.structureReason, c.contextReason,
     JSON.stringify(c.reasonCodes), alertStatus, createdAt, now,
     meta.positionSizing?.recommendedPositionSize ?? null,
@@ -104,14 +120,14 @@ export function saveCandidate(
     meta.confirmationStatus ?? null,
     meta.dailyBias ?? null,
     meta.orderFlowBias ?? null,
-    ctx.regime,
-    ctx.regimeConfidence,
+    ctx.regime ?? null,
+    ctx.regimeConfidence ?? null,
     ctx.marketDriverType ?? null,
-    ctx.participantBias,
-    ctx.participantPressureType,
-    ctx.participantConfidence,
+    ctx.participantBias ?? null,
+    ctx.participantPressureType ?? null,
+    ctx.participantConfidence ?? null,
     ctx.basisDivergence ? 1 : 0,
-    ctx.liquiditySession
+    ctx.liquiditySession ?? null
   );
 }
 
@@ -120,21 +136,15 @@ export function saveCandidateSnapshot(
   payload: AlertPayload,
   meta: CandidatePersistenceMeta = {}
 ): string {
-  const { candidate: c, alertStatus, createdAt, marketContext } = payload;
+  const { candidate: c, alertStatus, createdAt, marketContext: ctx } = payload;
   const baseCandidateId = buildId(c.symbol, c.direction, c.timeframe, c.entryHigh);
-  const candidateId = buildSnapshotCandidateId(
-    c.symbol,
-    c.direction,
-    c.timeframe,
-    c.entryHigh,
-    createdAt
-  );
+  const candidateId = buildSnapshotCandidateId(c.symbol, c.direction, c.timeframe, c.entryHigh, createdAt);
 
   db.prepare(`
     INSERT INTO candidate_snapshots (
       candidate_id, base_candidate_id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
-      signal_grade, regime_aligned, participant_aligned,
+      capital_velocity_score, regime_aligned, participant_aligned,
       structure_reason, context_reason, reason_codes,
       alert_status, confirmation_status,
       recommended_position_size, recommended_base_size, risk_amount, account_risk_percent,
@@ -145,13 +155,15 @@ export function saveCandidateSnapshot(
       daily_bias, order_flow_bias,
       regime, regime_confidence, market_driver_type,
       participant_bias, participant_pressure_type, participant_confidence,
-      basis_divergence, liquidity_session, execution_outcome, execution_reason_code, created_at
+      basis_divergence, liquidity_session,
+      execution_outcome, execution_reason_code,
+      created_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?, ?,
       ?, ?, ?,
+      ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?,
@@ -159,29 +171,16 @@ export function saveCandidateSnapshot(
       ?, ?,
       ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?, ?, ?
+      ?, ?,
+      ?, ?,
+      ?
     )
   `).run(
-    candidateId,
-    baseCandidateId,
-    c.symbol,
-    c.direction,
-    c.timeframe,
-    c.entryLow,
-    c.entryHigh,
-    c.stopLoss,
-    c.takeProfit,
-    c.riskReward,
-    c.signalGrade,
-    c.regimeAligned ? 1 : 0,
-    c.participantAligned ? 1 : 0,
-    c.structureReason,
-    c.contextReason,
-
-    JSON.stringify(c.reasonCodes),
-    alertStatus,
-
-    meta.confirmationStatus ?? null,
+    candidateId, baseCandidateId, c.symbol, c.direction, c.timeframe,
+    c.entryLow, c.entryHigh, c.stopLoss, c.takeProfit, c.riskReward,
+    c.capitalVelocityScore, c.regimeAligned ? 1 : 0, c.participantAligned ? 1 : 0,
+    c.structureReason, c.contextReason, JSON.stringify(c.reasonCodes),
+    alertStatus, meta.confirmationStatus ?? null,
     meta.positionSizing?.recommendedPositionSize ?? null,
     meta.positionSizing?.recommendedBaseSize ?? null,
     meta.positionSizing?.riskAmount ?? null,
@@ -195,15 +194,15 @@ export function saveCandidateSnapshot(
     meta.deliveryCompletedAt ?? null,
     meta.dailyBias ?? null,
     meta.orderFlowBias ?? null,
-    marketContext.regime,
-    marketContext.regimeConfidence,
-    marketContext.marketDriverType ?? null,
-    marketContext.participantBias,
-    marketContext.participantPressureType,
-    marketContext.participantConfidence,
-    marketContext.basisDivergence ? 1 : 0,
-    marketContext.liquiditySession,
-    meta.executionOutcome ?? defaultExecutionOutcome(alertStatus),
+    ctx.regime ?? null,
+    ctx.regimeConfidence ?? null,
+    ctx.marketDriverType ?? null,
+    ctx.participantBias ?? null,
+    ctx.participantPressureType ?? null,
+    ctx.participantConfidence ?? null,
+    ctx.basisDivergence ? 1 : 0,
+    ctx.liquiditySession ?? null,
+    meta.executionOutcome ?? "pending",
     meta.executionReasonCode ?? null,
     createdAt
   );
@@ -211,115 +210,13 @@ export function saveCandidateSnapshot(
   return candidateId;
 }
 
-/**
- * 更新候选信号的告警状态，通常由 `send-alert.ts` 在发送后调用。
- */
-export function updateAlertStatus(
-  db: Database.Database,
-  symbol: string,
-  direction: "long" | "short",
-  timeframe: "4h" | "1h",
-  entryHigh: number,
-  status: AlertPayload["alertStatus"],
-  options: {
-    deliveryCompletedAt?: number;
-  } = {}
-): void {
-  const id = buildId(symbol, direction, timeframe, entryHigh);
-  db.prepare(`
-    UPDATE candidates
-    SET
-      alert_status = ?,
-      delivery_completed_at = COALESCE(?, delivery_completed_at),
-      updated_at = ?
-    WHERE id = ?
-  `).run(status, options.deliveryCompletedAt ?? null, Date.now(), id);
-}
-
-export function markCandidateDeliveryStarted(
-  db: Database.Database,
-  symbol: string,
-  direction: "long" | "short",
-  timeframe: "4h" | "1h",
-  entryHigh: number,
-  startedAt: number
-): void {
-  const id = buildId(symbol, direction, timeframe, entryHigh);
-  db.prepare(`
-    UPDATE candidates
-    SET delivery_started_at = ?, updated_at = ?
-    WHERE id = ?
-  `).run(startedAt, Date.now(), id);
-}
-
-export function updateCandidateSnapshotOutcome(
-  db: Database.Database,
-  candidateId: string,
-  outcome: SnapshotExecutionOutcome,
-  options: {
-    alertStatus?: SnapshotAlertStatus;
-    executionReasonCode?: string;
-    deliveryCompletedAt?: number;
-  } = {}
-): void {
-  // 快照保留每一次执行尝试的结果，方便复盘“为什么没有实际发出告警”。
-  db.prepare(`
-    UPDATE candidate_snapshots
-    SET
-      execution_outcome = ?,
-      execution_reason_code = ?,
-      alert_status = COALESCE(?, alert_status),
-      delivery_completed_at = COALESCE(?, delivery_completed_at)
-    WHERE candidate_id = ?
-  `).run(
-    outcome,
-    options.executionReasonCode ?? null,
-    options.alertStatus ?? snapshotAlertStatusForOutcome(outcome),
-    options.deliveryCompletedAt ?? null,
-    candidateId
-  );
-}
-
-export function markCandidateSnapshotDeliveryStarted(
-  db: Database.Database,
-  candidateId: string,
-  startedAt: number
-): void {
-  db.prepare(`
-    UPDATE candidate_snapshots
-    SET delivery_started_at = ?
-    WHERE candidate_id = ?
-  `).run(startedAt, candidateId);
-}
-
-export type CandidateSnapshotRow = {
-  id: number;
-  candidateId: string;
-  baseCandidateId: string;
-  symbol: string;
-  direction: "long" | "short";
-  timeframe: "4h" | "1h";
-  signalGrade: string;
-  alertStatus: SnapshotAlertStatus;
-  confirmationStatus: string | null;
-  regime: string | null;
-  participantPressureType: string | null;
-  dailyBias: string | null;
-  orderFlowBias: string | null;
-  basisDivergence: boolean;
-  liquiditySession: string | null;
-  deliveryStartedAt: number | null;
-  deliveryCompletedAt: number | null;
-  executionOutcome: SnapshotExecutionOutcome | null;
-  executionReasonCode: string | null;
-  createdAt: number;
-};
+// ── 读取操作 ────────────────────────────────────────────────────────────────
 
 export function loadCandidateSnapshots(
   db: Database.Database,
   limit = 100
 ): CandidateSnapshotRow[] {
-  return (db.prepare(`
+  const rows = db.prepare(`
     SELECT
       id,
       candidate_id AS candidateId,
@@ -327,7 +224,7 @@ export function loadCandidateSnapshots(
       symbol,
       direction,
       timeframe,
-      signal_grade AS signalGrade,
+      capital_velocity_score AS capitalVelocityScore,
       alert_status AS alertStatus,
       confirmation_status AS confirmationStatus,
       regime,
@@ -344,30 +241,11 @@ export function loadCandidateSnapshots(
     FROM candidate_snapshots
     ORDER BY created_at DESC, id DESC
     LIMIT ?
-  `).all(limit) as Array<{
-    id: number;
-    candidateId: string;
-    baseCandidateId: string;
-    symbol: string;
-    direction: "long" | "short";
-    timeframe: "4h" | "1h";
-    signalGrade: string;
-    alertStatus: SnapshotAlertStatus;
-    confirmationStatus: string | null;
-    regime: string | null;
-    participantPressureType: string | null;
-    dailyBias: string | null;
-    orderFlowBias: string | null;
-    basisDivergence: number;
-    liquiditySession: string | null;
-    deliveryStartedAt: number | null;
-    deliveryCompletedAt: number | null;
-    executionOutcome: SnapshotExecutionOutcome | null;
-    executionReasonCode: string | null;
-    createdAt: number;
-  }>).map((row) => ({
-    ...row,
-    basisDivergence: row.basisDivergence === 1,
+  `).all(limit) as any[];
+
+  return rows.map((r) => ({
+    ...r,
+    basisDivergence: r.basisDivergence === 1,
   }));
 }
 
@@ -375,44 +253,42 @@ export function countCandidateSnapshotsByStatus(
   db: Database.Database,
   status: SnapshotAlertStatus
 ): number {
-  const row = db.prepare(
-    "SELECT COUNT(*) as n FROM candidate_snapshots WHERE alert_status = ?"
-  ).get(status) as { n: number };
-  return row.n;
+  const row = db.prepare("SELECT COUNT(*) AS cnt FROM candidate_snapshots WHERE alert_status = ?").get(status) as { cnt: number };
+  return row.cnt;
 }
 
-// ── 内部辅助 ──────────────────────────────────────────────────────────────────
+// ── 更新与辅助 ────────────────────────────────────────────────────────────────
 
-export function buildId(
-  symbol: string,
-  direction: string,
-  timeframe: string,
-  entryHigh: number
-): string {
+export function updateAlertStatus(db: Database.Database, symbol: string, direction: string, timeframe: string, entryHigh: number, status: string, options: { deliveryCompletedAt?: number } = {}): void {
+  const id = buildId(symbol, direction, timeframe, entryHigh);
+  db.prepare(`
+    UPDATE candidates
+    SET alert_status = ?, delivery_completed_at = COALESCE(?, delivery_completed_at), updated_at = ?
+    WHERE id = ?
+  `).run(status, options.deliveryCompletedAt ?? null, Date.now(), id);
+}
+
+export function updateCandidateSnapshotOutcome(db: Database.Database, candidateId: string, outcome: SnapshotExecutionOutcome, options: { alertStatus?: SnapshotAlertStatus; executionReasonCode?: string; deliveryCompletedAt?: number; } = {}): void {
+  db.prepare(`
+    UPDATE candidate_snapshots
+    SET execution_outcome = ?, execution_reason_code = ?, alert_status = COALESCE(?, alert_status), delivery_completed_at = COALESCE(?, delivery_completed_at)
+    WHERE candidate_id = ?
+  `).run(outcome, options.executionReasonCode ?? null, options.alertStatus ?? outcome, options.deliveryCompletedAt ?? null, candidateId);
+}
+
+export function markCandidateDeliveryStarted(db: Database.Database, symbol: string, direction: string, timeframe: string, entryHigh: number, startedAt: number): void {
+  const id = buildId(symbol, direction, timeframe, entryHigh);
+  db.prepare(`UPDATE candidates SET delivery_started_at = ?, updated_at = ? WHERE id = ?`).run(startedAt, Date.now(), id);
+}
+
+export function markCandidateSnapshotDeliveryStarted(db: Database.Database, candidateId: string, startedAt: number): void {
+  db.prepare(`UPDATE candidate_snapshots SET delivery_started_at = ? WHERE candidate_id = ?`).run(startedAt, candidateId);
+}
+
+export function buildId(symbol: string, direction: string, timeframe: string, entryHigh: number): string {
   return buildSignalId(symbol, direction, timeframe, entryHigh);
 }
 
-export function buildSnapshotCandidateId(
-  symbol: string,
-  direction: "long" | "short",
-  timeframe: "4h" | "1h",
-  entryHigh: number,
-  createdAt: number
-): string {
+export function buildSnapshotCandidateId(symbol: string, direction: string, timeframe: string, entryHigh: number, createdAt: number): string {
   return `${buildId(symbol, direction, timeframe, entryHigh)}_${createdAt}`;
-}
-
-function defaultExecutionOutcome(
-  alertStatus: AlertPayload["alertStatus"]
-): SnapshotExecutionOutcome {
-
-  if (alertStatus === "sent") return "sent";
-  if (alertStatus === "failed") return "failed";
-  return "pending";
-}
-
-function snapshotAlertStatusForOutcome(
-  outcome: SnapshotExecutionOutcome
-): SnapshotAlertStatus {
-  return outcome;
 }

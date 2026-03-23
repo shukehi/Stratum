@@ -9,7 +9,7 @@ export type LoadCandidateResult = {
 };
 
 /**
- * 候选信号查询  (PHASE_08)
+ * 候选信号查询 (V2 Physics)
  */
 export function findCandidate(
   db: Database.Database,
@@ -32,7 +32,7 @@ export function findCandidate(
     stopLoss: row.stop_loss,
     takeProfit: row.take_profit,
     riskReward: row.risk_reward,
-    signalGrade: row.signal_grade as TradeCandidate["signalGrade"],
+    capitalVelocityScore: row.capital_velocity_score, // 物理对齐
     regimeAligned: row.regime_aligned === 1,
     participantAligned: row.participant_aligned === 1,
     structureReason: row.structure_reason,

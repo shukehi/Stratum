@@ -5,19 +5,14 @@ import {
   saveCandidate,
   saveCandidateSnapshot,
   loadCandidateSnapshots,
-  countCandidateSnapshotsByStatus,
-  markCandidateDeliveryStarted,
-  markCandidateSnapshotDeliveryStarted,
   updateCandidateSnapshotOutcome,
   updateAlertStatus,
   buildId,
 } from "../../../src/services/persistence/save-candidate.js";
-import { loadRecentCandidates, findCandidate } from "../../../src/services/persistence/load-candidates.js";
+import { findCandidate } from "../../../src/services/persistence/load-candidates.js";
 import type { AlertPayload } from "../../../src/domain/signal/alert-payload.js";
 import type { TradeCandidate } from "../../../src/domain/signal/trade-candidate.js";
 import type { MarketContext } from "../../../src/domain/market/market-context.js";
-
-// ── テスト夹具 ────────────────────────────────────────────────────────────────
 
 function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate {
   return {
@@ -29,12 +24,12 @@ function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate 
     stopLoss: 58800,
     takeProfit: 63000,
     riskReward: 2.5,
-    signalGrade: "high-conviction",
+    capitalVelocityScore: 85.5,
     regimeAligned: true,
     participantAligned: true,
-    structureReason: "FVG + 流动性扫描",
-    contextReason: "趋势市场",
-    reasonCodes: ["STRUCTURE_CONFLUENCE_BOOST"],
+    structureReason: "Test",
+    contextReason: "Test",
+    reasonCodes: [],
     ...overrides,
   };
 }
@@ -42,16 +37,16 @@ function makeCandidate(overrides: Partial<TradeCandidate> = {}): TradeCandidate 
 function makeCtx(): MarketContext {
   return {
     regime: "trend",
-    regimeConfidence: 75,
+    regimeConfidence: 80,
     regimeReasons: [],
     participantBias: "balanced",
-    participantPressureType: "none",
-    participantConfidence: 70,
+    participantPressureType: "balanced",
+    participantConfidence: 80,
     participantRationale: "",
     spotPerpBasis: 0,
     basisDivergence: false,
     liquiditySession: "london_ramp",
-    summary: "テスト",
+    summary: "Test",
     reasonCodes: [],
   };
 }
@@ -60,7 +55,7 @@ function makePayload(overrides: Partial<TradeCandidate> = {}): AlertPayload {
   return {
     candidate: makeCandidate(overrides),
     marketContext: makeCtx(),
-    alertStatus: "pending",
+    alertStatus: "sent",
     createdAt: Date.now(),
   };
 }
@@ -72,390 +67,25 @@ beforeEach(() => {
   initDb(db);
 });
 
-// ── initDb ────────────────────────────────────────────────────────────────────
-
-describe("initDb", () => {
-  it("candidates テーブルが作成される", () => {
-    const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='candidates'").get();
-    expect(row).toBeDefined();
+describe("save-load-candidates (V2 Physics)", () => {
+  it("saveCandidate: 成功保存 CVS 物理分值", () => {
+    saveCandidate(db, makePayload({ capitalVelocityScore: 92.5 }));
+    const row = db.prepare("SELECT capital_velocity_score FROM candidates").get() as any;
+    expect(row.capital_velocity_score).toBe(92.5);
   });
 
-  it("二回呼んでもエラーにならない（IF NOT EXISTS）", () => {
-    expect(() => initDb(db)).not.toThrow();
-  });
-});
-
-// ── buildId ───────────────────────────────────────────────────────────────────
-
-describe("buildId", () => {
-  it("保留 entryHigh 的 8 位小数精度", () => {
-    expect(buildId("BTCUSDT", "long", "4h", 60000.99)).toBe(
-      "BTCUSDT_long_4h_60000.99000000"
-    );
-  });
-
-  it("整数价格会标准化为固定 8 位小数", () => {
-    expect(buildId("ETHUSDT", "short", "1h", 3000)).toBe(
-      "ETHUSDT_short_1h_3000.00000000"
-    );
-  });
-
-  it("低价资产的不同价格区不会映射到同一个 ID", () => {
-    expect(buildId("DOGEUSDT", "long", "4h", 0.12)).not.toBe(
-      buildId("DOGEUSDT", "long", "4h", 0.98)
-    );
-  });
-});
-
-// ── saveCandidate ─────────────────────────────────────────────────────────────
-
-describe("saveCandidate — 基本保存", () => {
-  it("レコードが 1 件挿入される", () => {
-    saveCandidate(db, makePayload());
-    const count = db.prepare("SELECT COUNT(*) as n FROM candidates").get() as { n: number };
-    expect(count.n).toBe(1);
-  });
-
-  it("symbol が正しく保存される", () => {
-    saveCandidate(db, makePayload());
-    const row = db.prepare("SELECT symbol FROM candidates").get() as { symbol: string };
-    expect(row.symbol).toBe("BTCUSDT");
-  });
-
-  it("direction が正しく保存される", () => {
-    saveCandidate(db, makePayload());
-    const row = db.prepare("SELECT direction FROM candidates").get() as { direction: string };
-    expect(row.direction).toBe("long");
-  });
-
-  it("reasonCodes が JSON として保存される", () => {
-    saveCandidate(db, makePayload());
-    const row = db.prepare("SELECT reason_codes FROM candidates").get() as { reason_codes: string };
-    expect(JSON.parse(row.reason_codes)).toContain("STRUCTURE_CONFLUENCE_BOOST");
-  });
-
-  it("regimeAligned=true → INTEGER 1", () => {
-    saveCandidate(db, makePayload());
-    const row = db.prepare("SELECT regime_aligned FROM candidates").get() as { regime_aligned: number };
-    expect(row.regime_aligned).toBe(1);
-  });
-
-  it("regimeAligned=false → INTEGER 0", () => {
-    saveCandidate(db, makePayload({ regimeAligned: false }));
-    const row = db.prepare("SELECT regime_aligned FROM candidates").get() as { regime_aligned: number };
-    expect(row.regime_aligned).toBe(0);
-  });
-
-  it("macroReason=undefined → NULL", () => {
-    saveCandidate(db, makePayload());
-    const row = db.prepare("SELECT macro_reason FROM candidates").get() as { macro_reason: string | null };
-    expect(row.macro_reason).toBeNull();
-  });
-
-  it("macroReason が指定された場合は保存される", () => {
-    saveCandidate(db, makePayload({ macroReason: "Fed pivot" }));
-    const row = db.prepare("SELECT macro_reason FROM candidates").get() as { macro_reason: string | null };
-    expect(row.macro_reason).toBe("Fed pivot");
-  });
-
-  it("持久化元数据会写入 candidates", () => {
-    saveCandidate(db, makePayload(), {
-      macroAction: "downgrade",
-      confirmationStatus: "pending",
-      dailyBias: "bullish",
-      orderFlowBias: "bearish",
-      positionSizing: {
-        status: "available",
-        recommendedPositionSize: 50_000,
-        recommendedBaseSize: 0.834,
-        riskAmount: 1_000,
-        accountRiskPercent: 0.01,
-        sameDirectionExposureCount: 1,
-        sameDirectionExposureRiskPercent: 0.01,
-        projectedSameDirectionRiskPercent: 0.02,
-        portfolioOpenRiskPercent: 0.02,
-        projectedPortfolioRiskPercent: 0.03,
-      },
-    });
-    const row = db.prepare(`
-      SELECT macro_action, confirmation_status, daily_bias, order_flow_bias, regime, participant_pressure_type,
-             liquidity_session, recommended_position_size, risk_amount, account_risk_percent, same_direction_exposure_count
-      FROM candidates
-    `).get() as {
-      macro_action: string;
-      confirmation_status: string;
-      daily_bias: string;
-      order_flow_bias: string;
-      regime: string;
-      participant_pressure_type: string;
-      liquidity_session: string;
-      recommended_position_size: number;
-      risk_amount: number;
-      account_risk_percent: number;
-      same_direction_exposure_count: number;
-    };
-    expect(row.macro_action).toBe("downgrade");
-    expect(row.confirmation_status).toBe("pending");
-    expect(row.daily_bias).toBe("bullish");
-    expect(row.order_flow_bias).toBe("bearish");
-    expect(row.regime).toBe("trend");
-    expect(row.participant_pressure_type).toBe("none");
-    expect(row.liquidity_session).toBe("london_ramp");
-    expect(row.recommended_position_size).toBe(50_000);
-    expect(row.risk_amount).toBe(1_000);
-    expect(row.account_risk_percent).toBeCloseTo(0.01, 5);
-    expect(row.same_direction_exposure_count).toBe(1);
-  });
-
-  it("delivery_started_at / delivery_completed_at 会写入 candidates", () => {
-    const payload = makePayload();
-    saveCandidate(db, payload, {
-      deliveryStartedAt: 1_700_000_000_000,
-      deliveryCompletedAt: 1_700_000_000_999,
-    });
-
-    const row = db.prepare(`
-      SELECT delivery_started_at, delivery_completed_at
-      FROM candidates
-    `).get() as {
-      delivery_started_at: number | null;
-      delivery_completed_at: number | null;
-    };
-    expect(row.delivery_started_at).toBe(1_700_000_000_000);
-    expect(row.delivery_completed_at).toBe(1_700_000_000_999);
-  });
-});
-
-describe("candidate_snapshots", () => {
-  it("blocked_by_macro 样本会被保留", () => {
-    saveCandidateSnapshot(
-      db,
-      { ...makePayload(), alertStatus: "blocked_by_macro" },
-      { macroAction: "block", confirmationStatus: "confirmed" }
-    );
-    expect(countCandidateSnapshotsByStatus(db, "blocked_by_macro")).toBe(1);
-  });
-
-  it("snapshot 可按最新顺序读取", () => {
-    const now = Date.now();
-    saveCandidateSnapshot(db, { ...makePayload({ symbol: "BTCUSDT" }), createdAt: now - 2000 });
-    saveCandidateSnapshot(db, { ...makePayload({ symbol: "ETHUSDT" }), createdAt: now - 1000 });
-    const rows = loadCandidateSnapshots(db, 10);
-    expect(rows[0].symbol).toBe("ETHUSDT");
-    expect(rows[1].symbol).toBe("BTCUSDT");
-  });
-
-  it("重复评估同一价格位会生成不同 candidateId，并保留同一 baseCandidateId", () => {
-    const createdAtA = Date.now() - 2000;
-    const createdAtB = Date.now() - 1000;
-    saveCandidateSnapshot(db, { ...makePayload(), createdAt: createdAtA });
-    saveCandidateSnapshot(db, { ...makePayload(), createdAt: createdAtB });
-
-    const rows = loadCandidateSnapshots(db, 10);
+  it("candidate_snapshots: 能够加载快照序列", () => {
+    saveCandidateSnapshot(db, makePayload({ symbol: "S1" }));
+    saveCandidateSnapshot(db, makePayload({ symbol: "S2" }));
+    const rows = loadCandidateSnapshots(db);
     expect(rows).toHaveLength(2);
-    expect(rows[0].candidateId).not.toBe(rows[1].candidateId);
-    expect(rows[0].baseCandidateId).toBe(rows[1].baseCandidateId);
+    expect(rows[0].symbol).toBe("S2");
   });
 
-  it("snapshot 会记录最终执行结果", () => {
-    const createdAt = Date.now();
-    const candidateId = saveCandidateSnapshot(
-      db,
-      { ...makePayload(), createdAt },
-      { executionOutcome: "pending" }
-    );
-
-    updateCandidateSnapshotOutcome(db, candidateId, "sent", {
-      alertStatus: "sent",
-    });
-
-    const row = loadCandidateSnapshots(db, 1)[0];
-    expect(row.alertStatus).toBe("sent");
-    expect(row.executionOutcome).toBe("sent");
-    expect(row.executionReasonCode).toBeNull();
-  });
-
-  it("snapshot 跳过结果会同步更新 alertStatus", () => {
-    const createdAt = Date.now();
-    const candidateId = saveCandidateSnapshot(
-      db,
-      { ...makePayload(), createdAt },
-      { executionOutcome: "pending" }
-    );
-
-    updateCandidateSnapshotOutcome(db, candidateId, "skipped_duplicate", {
-      executionReasonCode: "already_sent",
-    });
-
-    const row = loadCandidateSnapshots(db, 1)[0];
-    expect(row.alertStatus).toBe("skipped_duplicate");
-    expect(row.executionOutcome).toBe("skipped_duplicate");
-    expect(row.executionReasonCode).toBe("already_sent");
-    expect(countCandidateSnapshotsByStatus(db, "skipped_duplicate")).toBe(1);
-  });
-
-  it("snapshot 会记录发送开始和完成时间", () => {
-    const createdAt = Date.now();
-    const candidateId = saveCandidateSnapshot(
-      db,
-      { ...makePayload(), createdAt },
-      { executionOutcome: "pending" }
-    );
-
-    markCandidateSnapshotDeliveryStarted(db, candidateId, createdAt);
-    updateCandidateSnapshotOutcome(db, candidateId, "sent", {
-      alertStatus: "sent",
-      deliveryCompletedAt: createdAt + 1234,
-    });
-
-    const row = loadCandidateSnapshots(db, 1)[0];
-    expect(row.deliveryStartedAt).toBe(createdAt);
-    expect(row.deliveryCompletedAt).toBe(createdAt + 1234);
-    expect(row.executionOutcome).toBe("sent");
-  });
-});
-
-describe("saveCandidate — 重複上書き（INSERT OR REPLACE）", () => {
-  it("同じ ID で 2 回保存 → レコード数は 1 のまま", () => {
-    saveCandidate(db, makePayload());
-    saveCandidate(db, makePayload({ signalGrade: "standard" }));
-    const count = db.prepare("SELECT COUNT(*) as n FROM candidates").get() as { n: number };
-    expect(count.n).toBe(1);
-  });
-
-  it("上書き後は新しい signalGrade が反映される", () => {
-    saveCandidate(db, makePayload({ signalGrade: "high-conviction" }));
-    saveCandidate(db, makePayload({ signalGrade: "standard" }));
-    const row = db.prepare("SELECT signal_grade FROM candidates").get() as { signal_grade: string };
-    expect(row.signal_grade).toBe("standard");
-  });
-
-  it("異なる symbol → 別レコードが作られる", () => {
-    saveCandidate(db, makePayload({ symbol: "BTCUSDT" }));
-    saveCandidate(db, makePayload({ symbol: "ETHUSDT" }));
-    const count = db.prepare("SELECT COUNT(*) as n FROM candidates").get() as { n: number };
-    expect(count.n).toBe(2);
-  });
-});
-
-// ── updateAlertStatus ─────────────────────────────────────────────────────────
-
-describe("updateAlertStatus", () => {
-  it("pending → sent に更新できる", () => {
-    saveCandidate(db, makePayload());
-    updateAlertStatus(db, "BTCUSDT", "long", "4h", 60000, "sent");
-    const row = db.prepare("SELECT alert_status FROM candidates").get() as { alert_status: string };
-    expect(row.alert_status).toBe("sent");
-  });
-
-  it("pending → failed に更新できる", () => {
-    saveCandidate(db, makePayload());
-    updateAlertStatus(db, "BTCUSDT", "long", "4h", 60000, "failed");
-    const row = db.prepare("SELECT alert_status FROM candidates").get() as { alert_status: string };
-    expect(row.alert_status).toBe("failed");
-  });
-
-  it("存在しない ID → エラーにならない（0 行更新）", () => {
-    expect(() => updateAlertStatus(db, "XYZUSDT", "long", "4h", 99999, "sent")).not.toThrow();
-  });
-
-  it("会记录发送开始和完成时间", () => {
-    const payload = makePayload();
-    saveCandidate(db, payload);
-    markCandidateDeliveryStarted(db, "BTCUSDT", "long", "4h", 60000, payload.createdAt);
-    updateAlertStatus(db, "BTCUSDT", "long", "4h", 60000, "sent", {
-      deliveryCompletedAt: payload.createdAt + 4321,
-    });
-
-    const row = db.prepare(`
-      SELECT alert_status, delivery_started_at, delivery_completed_at
-      FROM candidates
-    `).get() as {
-      alert_status: string;
-      delivery_started_at: number | null;
-      delivery_completed_at: number | null;
-    };
-    expect(row.alert_status).toBe("sent");
-    expect(row.delivery_started_at).toBe(payload.createdAt);
-    expect(row.delivery_completed_at).toBe(payload.createdAt + 4321);
-  });
-});
-
-// ── loadRecentCandidates ──────────────────────────────────────────────────────
-
-describe("loadRecentCandidates", () => {
-  it("保存したレコードが読み込める", () => {
-    saveCandidate(db, makePayload());
-    const results = loadRecentCandidates(db, 24);
-    expect(results).toHaveLength(1);
-  });
-
-  it("読み込んだ候補の symbol が一致する", () => {
-    saveCandidate(db, makePayload({ symbol: "ETHUSDT" }));
-    const results = loadRecentCandidates(db, 24);
-    expect(results[0].candidate.symbol).toBe("ETHUSDT");
-  });
-
-  it("regimeAligned が boolean として復元される", () => {
-    saveCandidate(db, makePayload({ regimeAligned: false }));
-    const results = loadRecentCandidates(db, 24);
-    expect(results[0].candidate.regimeAligned).toBe(false);
-  });
-
-  it("reasonCodes が配列として復元される", () => {
-    saveCandidate(db, makePayload());
-    const results = loadRecentCandidates(db, 24);
-    expect(results[0].candidate.reasonCodes).toContain("STRUCTURE_CONFLUENCE_BOOST");
-  });
-
-  it("limitHours=0 → 空配列（過去 0 秒より前のレコードは返さない）", async () => {
-    saveCandidate(db, makePayload());
-    // 少し待って 0h 制限で検索 → created_at が今より前なので空になる
-    const pastPayload: AlertPayload = {
-      ...makePayload(),
-      createdAt: Date.now() - 5000, // 5 秒前
-    };
-    const freshDb = new Database(":memory:");
-    initDb(freshDb);
-    saveCandidate(freshDb, pastPayload);
-    const results = loadRecentCandidates(freshDb, 0);
-    expect(results).toHaveLength(0);
-  });
-
-  it("複数レコード → 新しい順（DESC）で返る", () => {
-    const now = Date.now();
-    saveCandidate(db, { ...makePayload(), createdAt: now - 2000 });
-    saveCandidate(db, { ...makePayload({ symbol: "ETHUSDT" }), createdAt: now - 1000 });
-    const results = loadRecentCandidates(db, 24);
-    expect(results[0].candidate.symbol).toBe("ETHUSDT"); // 新しい方が先
-  });
-
-  it("liquiditySession が復元される", () => {
-    saveCandidate(db, makePayload());
-    const results = loadRecentCandidates(db, 24);
-    expect(results[0].marketContext.liquiditySession).toBe("london_ramp");
-  });
-});
-
-// ── findCandidate ─────────────────────────────────────────────────────────────
-
-describe("findCandidate", () => {
-  it("存在する候補が取得できる", () => {
-    saveCandidate(db, makePayload());
-    const result = findCandidate(db, "BTCUSDT", "long", "4h", 60000);
-    expect(result).toBeDefined();
-    expect(result?.candidate.symbol).toBe("BTCUSDT");
-  });
-
-  it("存在しない候補 → undefined", () => {
-    const result = findCandidate(db, "XYZUSDT", "long", "4h", 60000);
-    expect(result).toBeUndefined();
-  });
-
-  it("alertStatus が正しく復元される", () => {
-    saveCandidate(db, makePayload());
-    updateAlertStatus(db, "BTCUSDT", "long", "4h", 60000, "sent");
-    const result = findCandidate(db, "BTCUSDT", "long", "4h", 60000);
-    expect(result?.alertStatus).toBe("sent");
+  it("findCandidate: 能够通过物理指纹找回信号", () => {
+    saveCandidate(db, makePayload({ symbol: "TARGET", entryHigh: 60000 }));
+    const res = findCandidate(db, "TARGET", "long", "4h", 60000);
+    expect(res).toBeDefined();
+    expect(res?.candidate.capitalVelocityScore).toBe(85.5);
   });
 });

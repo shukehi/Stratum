@@ -1,38 +1,24 @@
 import type { AlertPayload } from "../../domain/signal/alert-payload.js";
-import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { MarketContext } from "../../domain/market/market-context.js";
 import type { PositionSizingSummary } from "../../domain/signal/position-sizing.js";
 
 /**
- * 通知格式化模块 (PHASE_08)
+ * 通知格式化模块 (PHASE_08 - V2 Physics)
  *
  * 职责：
- *   将 AlertPayload 转换为清晰易读的 Telegram / Discord 消息文本。
+ *   将 AlertPayload 转换为清晰易读的物理动能报告。
  *
  * 格式示例：
- *   🚨 [A+] BTC/USDT:USDT 做多
+ *   🚀 [CVS: 85.5] BTC/USDT 做多
  *   入场区间：60000 - 60500
  *   止损：59000 (2.5%)
  *   止盈：64000 (5.8%)
  *   盈亏比：2.3
  *
- *   环境        趋势市 (Trend)
- *   参与者      卖方枯竭 (Short Squeeze)
- *   结构        看涨FVG回踩
- *   建议仓位    $1000 (10% 风险)
+ *   环境        趋势市 | 情绪偏多
+ *   结构        看涨流动性扫荡(物理确认)
+ *   状态        Test Context
  */
-
-const GRADE_EMOJI: Record<TradeCandidate["signalGrade"], string> = {
-  "high-conviction": "🚨",
-  "standard": "🟢",
-  "watch": "👀",
-};
-
-const GRADE_LABEL: Record<TradeCandidate["signalGrade"], string> = {
-  "high-conviction": "A+",
-  "standard": "A",
-  "watch": "B",
-};
 
 export type FormatAlertOptions = {
   positionSizing?: PositionSizingSummary;
@@ -45,15 +31,15 @@ export function formatAlert(
   const { candidate, marketContext: ctx } = payload;
   const { positionSizing } = options;
 
-  const emoji = GRADE_EMOJI[candidate.signalGrade];
-  const grade = GRADE_LABEL[candidate.signalGrade];
+  const cvs = candidate.capitalVelocityScore.toFixed(1);
   const directionStr = candidate.direction === "long" ? "做多" : "做空";
+  const emoji = candidate.direction === "long" ? "🚀" : "📉";
 
   const entryMid = (candidate.entryLow + candidate.entryHigh) / 2;
   const slPct = Math.abs(entryMid - candidate.stopLoss) / entryMid * 100;
   const tpPct = Math.abs(entryMid - candidate.takeProfit) / entryMid * 100;
 
-  const header = `${emoji} [${grade}] ${candidate.symbol} ${directionStr}`;
+  const header = `${emoji} [CVS: ${cvs}] ${candidate.symbol} ${directionStr}`;
   const priceBlock = [
     `入场区间：${candidate.entryLow.toLocaleString()} - ${candidate.entryHigh.toLocaleString()}`,
     `止损：${candidate.stopLoss.toLocaleString()} (${slPct.toFixed(2)}%)`,
