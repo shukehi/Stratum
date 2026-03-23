@@ -16,7 +16,6 @@ export type TradeCandidate = {
   participantAligned: boolean;
   structureReason: string;
   contextReason: string;
-  macroReason?: string;
   signalGrade: SignalGrade;
   reasonCodes: ReasonCode[];
 };

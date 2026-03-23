@@ -1,11 +1,9 @@
 import { env } from "./app/env.js";
 import { logger } from "./app/logger.js";
 import { CcxtClient } from "./clients/exchange/ccxt-client.js";
-import { createLlmClient } from "./clients/llm/llm-client.js";
 import { openDb } from "./services/persistence/init-db.js";
 import { runSignalScan } from "./services/orchestrator/run-signal-scan.js";
 import { runScheduler } from "./services/scheduler/run-scheduler.js";
-import { fetchNews } from "./services/macro/fetch-news.js";
 import { monitorPositions } from "./services/paper-trading/monitor-positions.js";
 import { monitorSession } from "./services/session/monitor-session.js";
 import { sendHeartbeat } from "./services/system/send-heartbeat.js";
@@ -18,9 +16,9 @@ import { startTelegramCommandBot } from "./services/telegram/telegram-command-bo
 /**
  * Stratum 入口  (PHASE_13)
  *
- * 四调度器架构：
+ * 三调度器架构（去宏观冗余后）：
  *   1. 信号扫描器（每 4h UTC 边界 + 30s 缓冲）
- *      检测结构信号 → 宏观过滤 → 发送通知 → 开模拟仓位
+ *      检测结构信号 → 发送通知 → 开模拟仓位
  *   2. 仓位监控器（每 30s）
  *      获取实时价格 → 检查 TP/SL → 自动平仓 → 发送通知
  *   3. 时段监控器（每 60s）
@@ -41,10 +39,6 @@ import { startTelegramCommandBot } from "./services/telegram/telegram-command-bo
  * 选填环境变量:
  *   SYMBOL              - 合约品种（默认: BTC/USDT:USDT）
  *   SPOT_SYMBOL         - 现货品种（默认: BTC/USDT）
- *   NEWS_API_KEY        - NewsAPI Key（不填则跳过新闻）
- *   LLM_API_KEY         - LLM API Key（Anthropic 或 OpenRouter，不填则跳过宏观分析）
- *   LLM_PROVIDER        - "anthropic" | "openrouter"（默认: anthropic）
- *   LLM_MODEL           - 模型名称（可选，不填则使用 provider 默认值）
  *   DATABASE_URL        - SQLite 路径（默认: ./stratum.db）
  *   ACCOUNT_SIZE        - 账户规模 USD（默认: 10000）
  *   RISK_PER_TRADE      - 单笔风险比例（默认: 0.01 = 1%）
@@ -65,13 +59,6 @@ const shutdown = (sig: string) => {
 };
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));
-
-// LLM 客户端（支持 anthropic / openrouter，LLM_API_KEY 未设置时为 no-op）
-const llmCall = createLlmClient({
-  apiKey: env.LLM_API_KEY,
-  provider: env.LLM_PROVIDER,
-  model: env.LLM_MODEL,
-});
 
 async function main(): Promise<void> {
   let lastSession: LiquiditySession | null = null;
@@ -102,10 +89,7 @@ async function main(): Promise<void> {
   const scanDeps = {
     client,
     db,
-    llmCall,
     notificationConfig,
-    newsApiKey: env.NEWS_API_KEY ?? "",
-    fetchNewsFn: fetchNews,
   };
 
   let stopDiscordBot: (() => Promise<void>) | null = null;

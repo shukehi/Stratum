@@ -6,7 +6,6 @@ import type { PositionSizingSummary } from "../../domain/signal/position-sizing.
 import { buildSignalId } from "../../utils/signal-id.js";
 
 export type CandidatePersistenceMeta = {
-  macroAction?: "pass" | "downgrade" | "block" | "error";
   confirmationStatus?: "pending" | "confirmed" | "invalidated";
   dailyBias?: DailyBias;
   orderFlowBias?: OrderFlowBias;
@@ -19,7 +18,6 @@ export type CandidatePersistenceMeta = {
 
 export type SnapshotExecutionOutcome =
   | "pending"
-  | "blocked_by_macro"
   | "skipped_execution_gate"
   | "skipped_duplicate"
   | "sent"
@@ -27,7 +25,6 @@ export type SnapshotExecutionOutcome =
 
 export type SnapshotAlertStatus =
   | "pending"
-  | "blocked_by_macro"
   | "skipped_execution_gate"
   | "skipped_duplicate"
   | "sent"
@@ -59,14 +56,14 @@ export function saveCandidate(
       id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
       signal_grade, regime_aligned, participant_aligned,
-      structure_reason, context_reason, macro_reason,
+      structure_reason, context_reason,
       reason_codes, alert_status, created_at, updated_at,
       recommended_position_size, recommended_base_size, risk_amount, account_risk_percent,
       same_direction_exposure_count, same_direction_exposure_risk_percent,
       projected_same_direction_risk_percent, portfolio_open_risk_percent,
       projected_portfolio_risk_percent,
       delivery_started_at, delivery_completed_at,
-      macro_action, confirmation_status, daily_bias, order_flow_bias,
+      confirmation_status, daily_bias, order_flow_bias,
       regime, regime_confidence, market_driver_type,
       participant_bias, participant_pressure_type, participant_confidence,
       basis_divergence, liquidity_session
@@ -74,13 +71,13 @@ export function saveCandidate(
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?,
-      ?, ?, ?,
+      ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?, ?, ?, ?,
       ?,
       ?, ?,
-      ?, ?, ?, ?,
+      ?, ?, ?,
       ?, ?, ?,
       ?, ?, ?,
       ?, ?
@@ -91,7 +88,7 @@ export function saveCandidate(
     id, c.symbol, c.direction, c.timeframe,
     c.entryLow, c.entryHigh, c.stopLoss, c.takeProfit, c.riskReward,
     c.signalGrade, c.regimeAligned ? 1 : 0, c.participantAligned ? 1 : 0,
-    c.structureReason, c.contextReason, c.macroReason ?? null,
+    c.structureReason, c.contextReason,
     JSON.stringify(c.reasonCodes), alertStatus, createdAt, now,
     meta.positionSizing?.recommendedPositionSize ?? null,
     meta.positionSizing?.recommendedBaseSize ?? null,
@@ -104,7 +101,6 @@ export function saveCandidate(
     meta.positionSizing?.projectedPortfolioRiskPercent ?? null,
     meta.deliveryStartedAt ?? null,
     meta.deliveryCompletedAt ?? null,
-    meta.macroAction ?? null,
     meta.confirmationStatus ?? null,
     meta.dailyBias ?? null,
     meta.orderFlowBias ?? null,
@@ -139,8 +135,8 @@ export function saveCandidateSnapshot(
       candidate_id, base_candidate_id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
       signal_grade, regime_aligned, participant_aligned,
-      structure_reason, context_reason, macro_reason, reason_codes,
-      alert_status, macro_action, confirmation_status,
+      structure_reason, context_reason, reason_codes,
+      alert_status, confirmation_status,
       recommended_position_size, recommended_base_size, risk_amount, account_risk_percent,
       same_direction_exposure_count, same_direction_exposure_risk_percent,
       projected_same_direction_risk_percent, portfolio_open_risk_percent,
@@ -181,10 +177,10 @@ export function saveCandidateSnapshot(
     c.participantAligned ? 1 : 0,
     c.structureReason,
     c.contextReason,
-    c.macroReason ?? null,
+
     JSON.stringify(c.reasonCodes),
     alertStatus,
-    meta.macroAction ?? null,
+
     meta.confirmationStatus ?? null,
     meta.positionSizing?.recommendedPositionSize ?? null,
     meta.positionSizing?.recommendedBaseSize ?? null,
@@ -305,7 +301,6 @@ export type CandidateSnapshotRow = {
   timeframe: "4h" | "1h";
   signalGrade: string;
   alertStatus: SnapshotAlertStatus;
-  macroAction: string | null;
   confirmationStatus: string | null;
   regime: string | null;
   participantPressureType: string | null;
@@ -334,7 +329,6 @@ export function loadCandidateSnapshots(
       timeframe,
       signal_grade AS signalGrade,
       alert_status AS alertStatus,
-      macro_action AS macroAction,
       confirmation_status AS confirmationStatus,
       regime,
       participant_pressure_type AS participantPressureType,
@@ -359,7 +353,6 @@ export function loadCandidateSnapshots(
     timeframe: "4h" | "1h";
     signalGrade: string;
     alertStatus: SnapshotAlertStatus;
-    macroAction: string | null;
     confirmationStatus: string | null;
     regime: string | null;
     participantPressureType: string | null;
@@ -412,7 +405,7 @@ export function buildSnapshotCandidateId(
 function defaultExecutionOutcome(
   alertStatus: AlertPayload["alertStatus"]
 ): SnapshotExecutionOutcome {
-  if (alertStatus === "blocked_by_macro") return "blocked_by_macro";
+
   if (alertStatus === "sent") return "sent";
   if (alertStatus === "failed") return "failed";
   return "pending";

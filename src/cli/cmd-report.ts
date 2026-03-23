@@ -1,10 +1,8 @@
-import Database from "better-sqlite3";
 import {
   getOverallStats,
   getWinRateByGrade,
   getWinRateByDirection,
   getWinRateByStructureType,
-  getMacroFilterStats,
   getExecutionFunnelStats,
   getPositionSizingStats,
   getOpenExposureByDirection,
@@ -14,10 +12,8 @@ import {
   getCandidateSnapshotBreakdownByExecutionReason,
   getExecutionBreakdownByRegime,
   getExecutionBreakdownByParticipantPressure,
-  getExecutionBreakdownByMacroAction,
   getOutcomeBreakdownByRegime,
   getOutcomeBreakdownByParticipantPressure,
-  getOutcomeBreakdownByMacroAction,
   getOutcomeBreakdownByDailyBias,
   getOutcomeBreakdownByOrderFlowBias,
   getOutcomeBreakdownByLiquiditySession,
@@ -42,7 +38,6 @@ import {
  *   pnpm report --grade        → 按信号等级分析
  *   pnpm report --direction    → 按多/空方向分析
  *   pnpm report --structure    → 按结构类型分析
- *   pnpm report --macro        → 宏观过滤效果
  *   pnpm report --funnel       → 执行漏斗 / 失败原因
  *   pnpm report --risk         → 仓位建议 / 组合风险
  *   pnpm report --logs [N]     → 最近 N 次扫描日志（默认 20）
@@ -53,7 +48,6 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   const showGrade = all || args.includes("--grade");
   const showDir   = all || args.includes("--direction");
   const showStr   = all || args.includes("--structure");
-  const showMacro = all || args.includes("--macro");
   const showFunnel = all || args.includes("--funnel");
   const showRisk  = all || args.includes("--risk");
   const showLogs  = all || args.includes("--logs");
@@ -83,9 +77,6 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   } else {
     kv("已平仓笔数", dim("无（模拟仓位尚未触及 TP/SL）"));
   }
-
-  kv("宏观拦截次数", String(s.macroBlockCount));
-  kv("宏观降级次数", String(s.macroDowngradeCount));
 
   // ── 按等级分析 ─────────────────────────────────────────────────────────────
   if (showGrade) {
@@ -143,7 +134,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
       printTable(
         ["宏观动作", "候选快照", "宏观拦截", "发送成功", "执行跳过/失败"],
         rows.map((r) => ({
-          宏观动作:  r.macroAction,
+
           候选快照:  String(r.snapshotCount),
           宏观拦截:  String(r.blockedCount),
           发送成功:  String(r.sentCount),
@@ -160,10 +151,8 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
     const reasonRows = getCandidateSnapshotBreakdownByExecutionReason(db);
     const regimeRows = getExecutionBreakdownByRegime(db);
     const participantRows = getExecutionBreakdownByParticipantPressure(db);
-    const macroRows = getExecutionBreakdownByMacroAction(db);
     const outcomeRegimeRows = getOutcomeBreakdownByRegime(db);
     const outcomeParticipantRows = getOutcomeBreakdownByParticipantPressure(db);
-    const outcomeMacroRows = getOutcomeBreakdownByMacroAction(db);
     const outcomeDailyBiasRows = getOutcomeBreakdownByDailyBias(db);
     const outcomeOrderFlowRows = getOutcomeBreakdownByOrderFlowBias(db);
     const outcomeSessionRows = getOutcomeBreakdownByLiquiditySession(db);
@@ -176,7 +165,6 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
         ["阶段", "数量", "占全部快照"],
         [
           funnelRow("候选快照", funnel.totalSnapshots, funnel.totalSnapshots),
-          funnelRow("宏观拦截", funnel.blockedByMacro, funnel.totalSnapshots),
           funnelRow("执行门控跳过", funnel.skippedExecutionGate, funnel.totalSnapshots),
           funnelRow("重复跳过", funnel.skippedDuplicate, funnel.totalSnapshots),
           funnelRow("发送失败", funnel.failed, funnel.totalSnapshots),
@@ -228,14 +216,6 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
       );
     }
 
-    if (macroRows.length > 0) {
-      console.log();
-      printTable(
-        ["Macro", "快照", "Block", "Gate", "Dup", "Fail", "Sent", "Opened"],
-        macroRows.map((row) => executionBreakdownToRow("Macro", row))
-      );
-    }
-
     if (outcomeWindowRows.length > 0) {
       console.log();
       console.log(
@@ -266,15 +246,6 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
         meaningfulOutcomeParticipantRows.map((row) =>
           outcomeBreakdownToRow("Participant", row)
         )
-      );
-    }
-
-    const meaningfulOutcomeMacroRows = outcomeMacroRows.filter((row) => row.sent > 0);
-    if (meaningfulOutcomeMacroRows.length > 0) {
-      console.log();
-      printTable(
-        ["Macro", "Sent", "Open", "Closed", "TP", "SL", "WinRate", "AvgR", "Sample"],
-        meaningfulOutcomeMacroRows.map((row) => outcomeBreakdownToRow("Macro", row))
       );
     }
 
@@ -343,7 +314,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
           品种: row.symbol,
           方向: row.direction,
           执行结果: row.executionOutcome ?? row.alertStatus,
-          宏观: row.macroAction ?? "unknown",
+
           风险: row.riskAmount !== null ? `$${fmtNumber(row.riskAmount)}` : "n/a",
           建议仓位: row.recommendedPositionSize !== null ? `$${fmtNumber(row.recommendedPositionSize)}` : "n/a",
           组合风险: row.projectedPortfolioRiskPercent !== null
@@ -389,10 +360,10 @@ function winRateToRow(r: WinRateRow): Record<string, string> {
 }
 
 function scanLogToRow(r: ScanLogRow): Record<string, string> {
-  const macroColor =
-    r.macroAction === "block"     ? red(r.macroAction) :
-    r.macroAction === "downgrade" ? yellow(r.macroAction) :
-    r.macroAction;
+
+
+
+
 
   return {
     "时间 (UTC)": fmtTime(r.scannedAt),
@@ -400,7 +371,7 @@ function scanLogToRow(r: ScanLogRow): Record<string, string> {
     信号:         String(r.candidatesFound),
     过滤后:       String(r.candidatesAfterMacro),
     发送:         r.alertsSent > 0 ? green(String(r.alertsSent)) : String(r.alertsSent),
-    宏观动作:     macroColor,
+
   };
 }
 
@@ -430,7 +401,7 @@ function funnelRow(
 }
 
 function executionBreakdownToRow(
-  columnLabel: "Regime" | "Participant" | "Macro",
+  columnLabel: "Regime" | "Participant",
   row: ExecutionBreakdownRow
 ): Record<string, string> {
   return {
@@ -446,7 +417,7 @@ function executionBreakdownToRow(
 }
 
 function outcomeBreakdownToRow(
-  columnLabel: "Regime" | "Participant" | "Macro" | "DailyBias" | "OrderFlow" | "Session",
+  columnLabel: "Regime" | "Participant" | "DailyBias" | "OrderFlow" | "Session",
   row: OutcomeBreakdownRow
 ): Record<string, string> {
   return {

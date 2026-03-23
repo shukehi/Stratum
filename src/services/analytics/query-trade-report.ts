@@ -31,11 +31,9 @@ export type ScanLogRow = {
   symbol: string;
   scannedAt: number;
   candidatesFound: number;
-  candidatesAfterMacro: number;
   alertsSent: number;
   alertsFailed: number;
   alertsSkipped: number;
-  macroAction: string;
   errorsCount: number;
   skipStage: string | null;
   skipReasonCode: string | null;
@@ -53,10 +51,7 @@ export type BreakdownRow = {
   total: number;
 };
 
-export type MacroFilterStatsRow = {
-  macroAction: string;
   snapshotCount: number;
-  blockedCount: number;
   sentCount: number;
   skippedOrFailedCount: number;
 };
@@ -70,8 +65,6 @@ export type OverallStats = {
   winRate: number;
   avgPnlR: number;
   totalR: number;
-  macroBlockCount: number;
-  macroDowngradeCount: number;
 };
 
 export type PositionSizingStats = {
@@ -98,7 +91,6 @@ export type RiskSnapshotRow = {
   alertStatus: string;
   executionOutcome: string | null;
   executionReasonCode: string | null;
-  macroAction: string | null;
   riskAmount: number | null;
   recommendedPositionSize: number | null;
   sameDirectionExposureCount: number | null;
@@ -108,7 +100,6 @@ export type RiskSnapshotRow = {
 
 export type ExecutionFunnelStats = {
   totalSnapshots: number;
-  blockedByMacro: number;
   skippedExecutionGate: number;
   skippedDuplicate: number;
   failed: number;
@@ -121,7 +112,6 @@ export type ExecutionFunnelStats = {
 export type ExecutionBreakdownRow = {
   label: string;
   totalSnapshots: number;
-  blockedByMacro: number;
   skippedExecutionGate: number;
   skippedDuplicate: number;
   failed: number;
@@ -173,14 +163,10 @@ export function getOverallStats(db: Database.Database): OverallStats {
     SELECT
       COUNT(*) as totalScans,
       SUM(alerts_sent) as totalSignalsSent,
-      SUM(CASE WHEN macro_action = 'block'     THEN 1 ELSE 0 END) as macroBlockCount,
-      SUM(CASE WHEN macro_action = 'downgrade' THEN 1 ELSE 0 END) as macroDowngradeCount
     FROM scan_logs
   `).get() as {
     totalScans: number;
     totalSignalsSent: number;
-    macroBlockCount: number;
-    macroDowngradeCount: number;
   };
 
   const posRow = db.prepare(`
@@ -212,8 +198,6 @@ export function getOverallStats(db: Database.Database): OverallStats {
     winRate: closed > 0 ? wins / closed : 0,
     avgPnlR: posRow.avgPnlR ?? 0,
     totalR: posRow.totalR ?? 0,
-    macroBlockCount: scanRow.macroBlockCount ?? 0,
-    macroDowngradeCount: scanRow.macroDowngradeCount ?? 0,
   };
 }
 
@@ -320,8 +304,6 @@ export function getRecentScanLogs(
 ): ScanLogRow[] {
   return (db.prepare(`
     SELECT
-      id, symbol, scanned_at, candidates_found, candidates_after_macro,
-      alerts_sent, alerts_failed, alerts_skipped, macro_action, errors_count,
       skip_stage, skip_reason_code, regime, participant_pressure_type,
       daily_bias, order_flow_bias, basis_divergence, market_driver_type, liquidity_session
     FROM scan_logs
@@ -329,9 +311,7 @@ export function getRecentScanLogs(
     LIMIT ?
   `).all(limit) as Array<{
     id: number; symbol: string; scanned_at: number;
-    candidates_found: number; candidates_after_macro: number;
     alerts_sent: number; alerts_failed: number; alerts_skipped: number;
-    macro_action: string; errors_count: number;
     skip_stage: string | null; skip_reason_code: string | null;
     regime: string | null; participant_pressure_type: string | null;
     daily_bias: string | null; order_flow_bias: string | null;
@@ -341,11 +321,9 @@ export function getRecentScanLogs(
     symbol: r.symbol,
     scannedAt: r.scanned_at,
     candidatesFound: r.candidates_found,
-    candidatesAfterMacro: r.candidates_after_macro,
     alertsSent: r.alerts_sent,
     alertsFailed: r.alerts_failed,
     alertsSkipped: r.alerts_skipped,
-    macroAction: r.macro_action,
     errorsCount: r.errors_count,
     skipStage: r.skip_stage,
     skipReasonCode: r.skip_reason_code,
@@ -364,12 +342,9 @@ export function getRecentScanLogs(
 /**
  * 宏观过滤统计：block/downgrade/pass 各占比及对应信号数
  */
-export function getMacroFilterStats(db: Database.Database): MacroFilterStatsRow[] {
   return (db.prepare(`
     SELECT
-      COALESCE(macro_action, 'unknown')                             AS macroAction,
       COUNT(*)                                                      AS snapshotCount,
-      SUM(CASE WHEN execution_outcome = 'blocked_by_macro' THEN 1 ELSE 0 END) AS blockedCount,
       SUM(CASE WHEN execution_outcome = 'sent' THEN 1 ELSE 0 END) AS sentCount,
       SUM(
         CASE
@@ -379,9 +354,6 @@ export function getMacroFilterStats(db: Database.Database): MacroFilterStatsRow[
         END
       ) AS skippedOrFailedCount
     FROM candidate_snapshots
-    GROUP BY COALESCE(macro_action, 'unknown')
-    ORDER BY snapshotCount DESC, macroAction ASC
-  `).all() as MacroFilterStatsRow[]);
 }
 
 export function getPositionSizingStats(
@@ -454,7 +426,6 @@ export function getRecentRiskSnapshots(
       alert_status AS alertStatus,
       execution_outcome AS executionOutcome,
       execution_reason_code AS executionReasonCode,
-      macro_action AS macroAction,
       risk_amount AS riskAmount,
       recommended_position_size AS recommendedPositionSize,
       same_direction_exposure_count AS sameDirectionExposureCount,
@@ -472,7 +443,6 @@ export function getExecutionFunnelStats(
   const row = db.prepare(`
     SELECT
       COUNT(*) AS totalSnapshots,
-      SUM(CASE WHEN execution_outcome = 'blocked_by_macro' THEN 1 ELSE 0 END) AS blockedByMacro,
       SUM(CASE WHEN execution_outcome = 'skipped_execution_gate' THEN 1 ELSE 0 END) AS skippedExecutionGate,
       SUM(CASE WHEN execution_outcome = 'skipped_duplicate' THEN 1 ELSE 0 END) AS skippedDuplicate,
       SUM(CASE WHEN execution_outcome = 'failed' THEN 1 ELSE 0 END) AS failed,
@@ -518,7 +488,6 @@ export function getExecutionFunnelStats(
     FROM candidate_snapshots
   `).get() as {
     totalSnapshots: number | null;
-    blockedByMacro: number | null;
     skippedExecutionGate: number | null;
     skippedDuplicate: number | null;
     failed: number | null;
@@ -530,7 +499,6 @@ export function getExecutionFunnelStats(
 
   return {
     totalSnapshots: row.totalSnapshots ?? 0,
-    blockedByMacro: row.blockedByMacro ?? 0,
     skippedExecutionGate: row.skippedExecutionGate ?? 0,
     skippedDuplicate: row.skippedDuplicate ?? 0,
     failed: row.failed ?? 0,
@@ -572,9 +540,7 @@ export function getCandidateSnapshotBreakdownByMacroAction(
   db: Database.Database
 ): BreakdownRow[] {
   return getBreakdownRows(db, `
-    SELECT COALESCE(macro_action, 'unknown') AS label, COUNT(*) AS total
     FROM candidate_snapshots
-    GROUP BY COALESCE(macro_action, 'unknown')
     ORDER BY total DESC, label ASC
   `);
 }
@@ -630,7 +596,6 @@ export function getExecutionBreakdownByParticipantPressure(
 export function getExecutionBreakdownByMacroAction(
   db: Database.Database
 ): ExecutionBreakdownRow[] {
-  return getExecutionBreakdownRows(db, "COALESCE(macro_action, 'unknown')");
 }
 
 export function getOutcomeBreakdownByRegime(
@@ -651,7 +616,6 @@ export function getOutcomeBreakdownByParticipantPressure(
 export function getOutcomeBreakdownByMacroAction(
   db: Database.Database
 ): OutcomeBreakdownRow[] {
-  return getOutcomeBreakdownRows(db, "COALESCE(macro_action, 'unknown')");
 }
 
 export function getOutcomeBreakdownByDailyBias(
@@ -694,7 +658,6 @@ function getExecutionBreakdownRows(
     SELECT
       ${labelExpr} AS label,
       COUNT(*) AS totalSnapshots,
-      SUM(CASE WHEN execution_outcome = 'blocked_by_macro' THEN 1 ELSE 0 END) AS blockedByMacro,
       SUM(CASE WHEN execution_outcome = 'skipped_execution_gate' THEN 1 ELSE 0 END) AS skippedExecutionGate,
       SUM(CASE WHEN execution_outcome = 'skipped_duplicate' THEN 1 ELSE 0 END) AS skippedDuplicate,
       SUM(CASE WHEN execution_outcome = 'failed' THEN 1 ELSE 0 END) AS failed,

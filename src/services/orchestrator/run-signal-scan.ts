@@ -1,8 +1,6 @@
 import type { ExchangeClient } from "../../clients/exchange/ccxt-client.js";
-import type { LlmCallFn } from "../macro/assess-macro-overlay.js";
 import type { HttpFetchFn } from "../alerting/send-alert.js";
 import type { NotificationConfig } from "../alerting/send-notification.js";
-import type { NewsItem } from "../../domain/news/news-item.js";
 import type { Candle } from "../../domain/market/candle.js";
 import type { AlertPayload } from "../../domain/signal/alert-payload.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
@@ -16,15 +14,12 @@ import { logger } from "../../app/logger.js";
 import { fetchMarketData } from "../market-data/fetch-market-data.js";
 import { fetchFundingRates } from "../market-data/fetch-funding-rates.js";
 import { fetchOpenInterest } from "../market-data/fetch-open-interest.js";
-import { fetchNews as defaultFetchNews } from "../macro/fetch-news.js";
 import { detectMarketRegime } from "../regime/detect-market-regime.js";
 import { assessParticipantPressure } from "../participants/assess-participant-pressure.js";
 import { buildMarketContext } from "../participants/build-market-context.js";
 import { isTradableContext } from "../participants/is-tradable-context.js";
 import { analyzeStructuralSetups } from "../structure/detect-structural-setups.js";
 import { analyzeConsensus } from "../consensus/evaluate-consensus.js";
-import { assessMacroOverlay } from "../macro/assess-macro-overlay.js";
-import { applyMacroOverlay } from "../macro/apply-macro-overlay.js";
 import {
   buildId,
   markCandidateDeliveryStarted,
@@ -51,21 +46,17 @@ import { evaluateExposureGate } from "../risk/evaluate-exposure-gate.js";
  * 针对单一交易品种串起 PHASE_03～08 的完整流水线。
  *
  * 执行顺序（按因果链组织）：
- *   [并行] 4h/1h/1d K 线 + 资金费率 + OI + 现货价格 + 新闻
+ *   [并行] 4h/1h/1d K 线 + 资金费率 + OI + 现货价格
  *   PHASE_03  detectMarketRegime        → RegimeDecision
  *   PHASE_04  assessParticipantPressure → ParticipantPressure
  *             buildMarketContext        → MarketContext
  *             isTradableContext         → 结构层前置硬门控
  *   PHASE_05  analyzeStructuralSetups   → StructuralSetup[]
  *   PHASE_06  analyzeConsensus          → TradeCandidate[]
- *   PHASE_07  assessMacroOverlay        → MacroOverlayDecision
- *             applyMacroOverlay         → 过滤后的 TradeCandidate[]
  *   PHASE_08  saveCandidate + sendAlert → 数据库落盘 + 通知推送
  *
  * 错误隔离策略：
  *   - 交易所主数据获取失败：直接抛错，流程终止；
- *   - 新闻获取失败：降级为空数组并继续；
- *   - 宏观评估失败：让候选直接通过并继续；
  *   - 通知发送失败：保留 failed 状态并记录错误。
  *
  * 去重策略：
@@ -80,34 +71,24 @@ export type ScanDeps = {
   client: ExchangeClient;
   /** SQLite 数据库实例，测试环境可传入 `:memory:`。 */
   db: Database.Database;
-  /** LLM 调用函数，测试中通常注入 mock。 */
-  llmCall: LlmCallFn;
   /** 通知发送所用的 fetch，未传入时退回全局实现。 */
   httpFetch?: HttpFetchFn;
   /** 通知通道配置。 */
   notificationConfig: NotificationConfig;
-  /** NewsAPI 密钥；为空时跳过新闻抓取。 */
-  newsApiKey?: string;
-  /** 新闻获取函数，便于测试时替换。 */
-  fetchNewsFn?: (apiKey: string, maxItems: number) => Promise<NewsItem[]>;
 };
 
 export type SignalScanResult = {
   symbol: string;
   scannedAt: number;
-  /** PHASE_06 输出的候选数，即宏观过滤前数量。 */
+  /** PHASE_06 输出的候选数。 */
   candidatesFound: number;
-  /** PHASE_07 之后剩余的候选数，即宏观过滤后数量。 */
-  candidatesAfterMacro: number;
   /** 告警发送成功数。 */
   alertsSent: number;
   /** 告警发送失败数。 */
   alertsFailed: number;
   /** 因重复而跳过的告警数。 */
   alertsSkipped: number;
-  /** 宏观评估最终动作。 */
-  macroAction: "pass" | "downgrade" | "block" | "error";
-  skipStage?: "context_gate" | "structure" | "consensus" | "macro";
+  skipStage?: "context_gate" | "structure" | "consensus";
   skipReasonCode?: ReasonCode;
   regime?: string;
   participantPressureType?: string;
@@ -135,11 +116,7 @@ export async function runSignalScan(
   const {
     client,
     db,
-    llmCall,
-    httpFetch,
     notificationConfig,
-    newsApiKey = "",
-    fetchNewsFn = defaultFetchNews,
   } = deps;
 
   const scannedAt = Date.now();
@@ -147,9 +124,9 @@ export async function runSignalScan(
 
   logger.info({ symbol }, "PHASE_09: signal scan started");
 
-  // ── [并行] 市场数据与新闻 ────────────────────────────────────────────────
-  // 交易所主数据失败属于致命问题，直接中断；新闻失败仅降级，不阻塞主链路。
-  const [candles4h, candles1h, candles1d, fundingRates, openInterest, spotTicker, news] =
+  // ── [并行] 市场数据 ──────────────────────────────────────────────────────
+  // 交易所主数据失败属于致命问题，直接中断。
+  const [candles4h, candles1h, candles1d, fundingRates, openInterest, spotTicker] =
     await Promise.all([
       fetchMarketData(client, symbol, "4h", config.marketDataLimit),
       fetchMarketData(client, symbol, "1h", config.marketDataLimit),
@@ -162,12 +139,6 @@ export async function runSignalScan(
       fetchFundingRates(client, symbol, 10),
       fetchOpenInterest(client, symbol, 10),
       client.fetchSpotTicker(spotSymbol),
-      fetchNewsFn(newsApiKey, config.maxNewsItemsForPrompt).catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`news fetch failed: ${msg}`);
-        logger.warn({ err }, "News fetch failed, proceeding with no news");
-        return [] as NewsItem[];
-      }),
     ]);
 
   logger.debug(
@@ -272,7 +243,7 @@ export async function runSignalScan(
       alertsSent: 0,
       alertsFailed: 0,
       alertsSkipped: 0,
-      macroAction: "pass",
+
       skipStage: "context_gate",
       skipReasonCode: tradableContext.reasonCode,
       regime: ctx.regime,
@@ -312,18 +283,16 @@ export async function runSignalScan(
   const candidatesFound = candidates.length;
   logger.info({ symbol, candidatesFound }, "PHASE_06 done");
 
-  // 候选数为零时，无需继续做宏观评估和告警发送
+  // 候选数为零时，无需继续做告警发送
   if (candidatesFound === 0) {
     logger.info({ symbol }, "PHASE_09: no candidates, scan complete");
     const emptyResult: SignalScanResult = {
       symbol,
       scannedAt,
       candidatesFound: 0,
-      candidatesAfterMacro: 0,
       alertsSent: 0,
       alertsFailed: 0,
       alertsSkipped: 0,
-      macroAction: "pass",
       skipStage: setups.length === 0 ? "structure" : "consensus",
       skipReasonCode:
         setups.length === 0
@@ -342,75 +311,19 @@ export async function runSignalScan(
     return emptyResult;
   }
 
-  // ── PHASE_07: 宏观覆盖层 ───────────────────────────────────────────────
-  let macroAction: SignalScanResult["macroAction"] = "pass";
-  let macroResults: Array<{
-    candidate: (typeof candidates)[number];
-    decision: Awaited<ReturnType<typeof assessMacroOverlay>>["decision"] | null;
-    filtered: TradeCandidate[];
-  }> = [];
-
-  try {
-    macroResults = await Promise.all(
-      candidates.map(async (candidate) => {
-        const { decision } = await assessMacroOverlay(news, candidate, config, llmCall);
-        return {
-          candidate,
-          decision,
-          filtered: applyMacroOverlay([candidate], decision),
-        };
-      })
-    );
-    const macroDecisions = macroResults
-      .map((result) => result.decision?.action)
-      .filter((action): action is "pass" | "downgrade" | "block" => action !== undefined);
-    macroAction = aggregateMacroAction(
-      macroDecisions
-    );
-    logger.info(
-      {
-        macroAction,
-        candidatesAfterMacro: macroResults.reduce(
-          (count, result) => count + result.filtered.length,
-          0
-        ),
-        macroDecisions,
-      },
-      "PHASE_07 done"
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    errors.push(`macro overlay failed: ${msg}`);
-    macroAction = "error";
-    macroResults = candidates.map((candidate) => ({
-      candidate,
-      decision: null,
-      filtered: [candidate],
-    }));
-    // 宏观评估失败时，让所有候选直接通过并继续执行
-    logger.warn({ err }, "Macro overlay failed, proceeding with all candidates");
-  }
-
-  const candidatesAfterMacro = macroResults.reduce(
-    (count, result) => count + result.filtered.length,
-    0
-  );
   let alertsSent = 0;
   let alertsFailed = 0;
   let alertsSkipped = 0;
 
-  for (const result of macroResults) {
+  for (const candidate of candidates) {
     const sameDirectionExposure = getOpenRiskSummary(
       db,
-      result.candidate.direction
+      candidate.direction
     );
     const currentPortfolioExposure = getOpenRiskSummary(db);
-    const snapshotCandidate =
-      result.decision?.action === "block"
-        ? applyMacroDecisionToCandidate(result.candidate, result.decision)
-        : result.filtered[0] ?? result.candidate;
+    
     const positionSizing = buildPositionSizingSummary({
-      candidate: snapshotCandidate,
+      candidate,
       config,
       sameDirectionExposureCount: sameDirectionExposure.openCount,
       sameDirectionOpenRiskPercent: sameDirectionExposure.openRiskPercent,
@@ -418,30 +331,21 @@ export async function runSignalScan(
     });
 
     const snapshotPayload: AlertPayload = {
-      candidate: snapshotCandidate,
+      candidate,
       marketContext: ctx,
-      alertStatus: result.decision?.action === "block" ? "blocked_by_macro" : "pending",
+      alertStatus: "pending",
       createdAt: scannedAt,
     };
 
     const snapshotCandidateId = saveCandidateSnapshot(db, snapshotPayload, {
-      macroAction: result.decision?.action ?? "error",
-      confirmationStatus: inferConfirmationStatus(snapshotCandidate.reasonCodes),
+      confirmationStatus: inferConfirmationStatus(candidate.reasonCodes),
       dailyBias: dailyBiasResult?.bias,
       orderFlowBias: orderFlowResult.bias,
       positionSizing,
-      executionOutcome:
-        result.decision?.action === "block" ? "blocked_by_macro" : "pending",
-      executionReasonCode:
-        result.decision?.action === "block" ? "MACRO_BLOCKED" : undefined,
+      executionOutcome: "pending",
     });
 
-    if (result.filtered.length === 0) {
-      continue;
-    }
-
     // ── PHASE_08: 持久化与告警发送 ───────────────────────────────────────
-    const candidate = result.filtered[0];
     const executionExposureGate = evaluateExposureGate({
       sameDirectionExposureCount: sameDirectionExposure.openCount,
       sameDirectionOpenRiskPercent: sameDirectionExposure.openRiskPercent,
@@ -542,7 +446,6 @@ export async function runSignalScan(
 
     // 永続化（INSERT OR REPLACE），先落 pending 状态，再发告警
     saveCandidate(db, payload, {
-      macroAction: result.decision?.action ?? "error",
       confirmationStatus: inferConfirmationStatus(candidate.reasonCodes),
       dailyBias: dailyBiasResult?.bias,
       orderFlowBias: orderFlowResult.bias,
@@ -609,7 +512,7 @@ export async function runSignalScan(
   }
 
   logger.info(
-    { symbol, alertsSent, alertsFailed, alertsSkipped, macroAction },
+    { symbol, alertsSent, alertsFailed, alertsSkipped },
     "PHASE_09: scan complete"
   );
 
@@ -617,13 +520,9 @@ export async function runSignalScan(
     symbol,
     scannedAt,
     candidatesFound,
-    candidatesAfterMacro,
     alertsSent,
     alertsFailed,
     alertsSkipped,
-    macroAction,
-    skipStage: candidatesAfterMacro === 0 && macroAction === "block" ? "macro" : undefined,
-    skipReasonCode: candidatesAfterMacro === 0 && macroAction === "block" ? "MACRO_BLOCKED" : undefined,
     regime: ctx.regime,
     participantPressureType: ctx.participantPressureType,
     dailyBias: dailyBiasResult?.bias,
@@ -640,31 +539,10 @@ export async function runSignalScan(
   return result;
 }
 
-function aggregateMacroAction(
-  actions: Array<"pass" | "downgrade" | "block">
-): SignalScanResult["macroAction"] {
-  if (actions.includes("block")) return "block";
-  if (actions.includes("downgrade")) return "downgrade";
-  return "pass";
-}
-
 function inferConfirmationStatus(
   reasonCodes: ReasonCode[]
 ): "pending" | "confirmed" | "invalidated" {
   if (reasonCodes.includes("STRUCTURE_CONFIRMATION_INVALIDATED")) return "invalidated";
   if (reasonCodes.includes("STRUCTURE_CONFIRMATION_PENDING")) return "pending";
   return "confirmed";
-}
-
-function applyMacroDecisionToCandidate(
-  candidate: TradeCandidate,
-  decision: NonNullable<
-    Awaited<ReturnType<typeof assessMacroOverlay>>["decision"]
-  >
-): TradeCandidate {
-  return {
-    ...candidate,
-    macroReason: decision.reason,
-    reasonCodes: [...new Set([...candidate.reasonCodes, ...decision.reasonCodes])],
-  };
 }

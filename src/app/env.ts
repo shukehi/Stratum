@@ -4,11 +4,6 @@ const EnvSchema = z.object({
   EXCHANGE_NAME: z.string().trim().default("binanceusdm"),
   SYMBOL: z.string().trim().default("BTC/USDT:USDT"),
   SPOT_SYMBOL: z.string().trim().default("BTC/USDT"),
-  NEWS_API_KEY: z.string().trim().optional(),
-  // LLM 配置
-  LLM_API_KEY: z.string().trim().optional(),
-  LLM_PROVIDER: z.enum(["anthropic", "openrouter"]).default("anthropic"),
-  LLM_MODEL: z.string().trim().optional(), // 不填则按 provider 使用默认模型
   TELEGRAM_BOT_TOKEN: z.string().trim().optional(),
   TELEGRAM_CHAT_ID: z.string().trim().optional(),
   TELEGRAM_COMMAND_BOT_ENABLED: z.enum(["true", "false"]).default("false"),

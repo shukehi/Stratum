@@ -17,11 +17,9 @@ export function initDb(db: Database.Database): void {
       symbol                 TEXT    NOT NULL,
       scanned_at             INTEGER NOT NULL,
       candidates_found       INTEGER NOT NULL DEFAULT 0,
-      candidates_after_macro INTEGER NOT NULL DEFAULT 0,
       alerts_sent            INTEGER NOT NULL DEFAULT 0,
       alerts_failed          INTEGER NOT NULL DEFAULT 0,
       alerts_skipped         INTEGER NOT NULL DEFAULT 0,
-      macro_action           TEXT    NOT NULL DEFAULT 'pass',
       errors_count           INTEGER NOT NULL DEFAULT 0,
       errors_json            TEXT    NOT NULL DEFAULT '[]'
     );
@@ -47,8 +45,7 @@ export function initDb(db: Database.Database): void {
       participant_aligned INTEGER NOT NULL,
       structure_reason TEXT    NOT NULL,
       context_reason   TEXT    NOT NULL,
-      macro_reason     TEXT,
-      reason_codes     TEXT    NOT NULL,
+      reason_codes     TEXT    NOT NULL DEFAULT '[]',
       alert_status     TEXT    NOT NULL DEFAULT 'pending',
       recommended_position_size REAL,
       recommended_base_size REAL,
@@ -101,12 +98,10 @@ export function initDb(db: Database.Database): void {
       signal_grade              TEXT    NOT NULL,
       regime_aligned            INTEGER NOT NULL,
       participant_aligned       INTEGER NOT NULL,
-      structure_reason          TEXT    NOT NULL,
-      context_reason            TEXT    NOT NULL,
-      macro_reason              TEXT,
-      reason_codes              TEXT    NOT NULL,
+      structure_reason TEXT    NOT NULL,
+      context_reason   TEXT    NOT NULL,
+      reason_codes     TEXT    NOT NULL DEFAULT '[]',
       alert_status              TEXT    NOT NULL DEFAULT 'pending',
-      macro_action              TEXT,
       confirmation_status       TEXT,
       recommended_position_size REAL,
       recommended_base_size     REAL,
@@ -137,8 +132,6 @@ export function initDb(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_candidate_snapshots_symbol
       ON candidate_snapshots(symbol, created_at DESC);
 
-    CREATE INDEX IF NOT EXISTS idx_candidate_snapshots_macro_action
-      ON candidate_snapshots(macro_action, created_at DESC);
   `);
 
   ensureColumn(db, "scan_logs", "skip_stage", "TEXT");
@@ -151,7 +144,6 @@ export function initDb(db: Database.Database): void {
   ensureColumn(db, "scan_logs", "market_driver_type", "TEXT");
   ensureColumn(db, "scan_logs", "liquidity_session", "TEXT");
 
-  ensureColumn(db, "candidates", "macro_action", "TEXT");
   ensureColumn(db, "candidates", "confirmation_status", "TEXT");
   ensureColumn(db, "candidates", "daily_bias", "TEXT");
   ensureColumn(db, "candidates", "order_flow_bias", "TEXT");
