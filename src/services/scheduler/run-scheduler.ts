@@ -1,91 +1,120 @@
 import { logger } from "../../app/logger.js";
 
 /**
- * 调度器  (PHASE_10-A)
+ * 调度器  (PHASE_10-A / musk-optimization-v1)
  *
- * 设计原则：
- *   - 对齐 4h K 线收盘边界执行扫描，保证使用的是最新已确认数据；
- *   - 通过 `AbortSignal` 支持优雅停机，让进行中的扫描先跑完；
- *   - 单次扫描失败只记录日志，不导致进程崩溃；
- *   - `scanFn` 外部注入，因此调度器本身不依赖具体基础设施。
+ * 两种调用语法（均导出为 `runScheduler`，通过 TypeScript 重载区分）：
  *
- * 使用示例（见 `src/index.ts`）：
- *   `const controller = new AbortController();`
- *   `process.on("SIGTERM", () => controller.abort());`
- *   `await runScheduler(() => runSignalScan(...), {}, controller.signal);`
+ * **V1 — 单回调**（供 `src/index.ts` 等存量代码使用）
+ *   ```ts
+ *   runScheduler(scanFn, options, signal)
+ *   ```
+ *
+ * **V2 — 多回调配置对象**（新接口，供调度器测试使用）
+ *   ```ts
+ *   runScheduler({ scanSymbols, onScan, onMonitor, onSession, onHeartbeat }, signal, intervals)
+ *   ```
  */
 
+// ── SchedulerOptions（V1）───────────────────────────────────────────────────
+
 export type SchedulerOptions = {
-  /**
-   * 扫描间隔（毫秒）。
-   * 当 `alignToInterval=true` 时，该值也作为边界对齐基准。
-   * 默认 4h（14_400_000ms）。
-   */
   intervalMs?: number;
-  /**
-   * K 线收盘后的缓冲时间（毫秒），用于吸收交易所落盘延迟。
-   * 默认 30_000ms（30 秒）。
-   */
   bufferMs?: number;
-  /**
-   * 为 `true` 时按固定边界对齐扫描；为 `false` 时按固定间隔轮询。
-   * 默认 `true`。
-   */
   alignToInterval?: boolean;
-  /**
-   * 为 `true` 时进程启动后立即先执行一次扫描。
-   * 默认 `true`。
-   */
   immediate?: boolean;
 };
 
-// ── 对外辅助函数（纯函数，便于测试）────────────────────────────────────────
+// ── SchedulerV2Config（V2）──────────────────────────────────────────────────
 
-/**
- * 计算距离下一个调度边界还需等待多少毫秒（纯函数）。
- *
- * 例：`intervalMs=4h`、`bufferMs=30s`
- *   `nowMs` 恰好落在边界上  → `intervalMs + bufferMs`
- *   `nowMs` 比边界晚 1 小时 → `3h + bufferMs`
- *   `nowMs` 距离边界差 1ms  → `1 + bufferMs`
- */
+export type SchedulerV2Config = {
+  scanSymbols: string[];
+  onScan: (symbols: string[]) => Promise<unknown>;
+  onMonitor: () => Promise<unknown>;
+  onSession: () => Promise<unknown>;
+  onHeartbeat: () => Promise<unknown>;
+};
+
+export type SchedulerV2Intervals = {
+  scanIntervalMs?: number;
+  monitorIntervalMs?: number;
+  sessionIntervalMs?: number;
+  heartbeatIntervalMs?: number;
+};
+
+// ── 辅助函数（纯函数，便于测试）─────────────────────────────────────────────
+
 export function msUntilNextBoundary(
   nowMs: number,
   intervalMs: number,
   bufferMs: number
 ): number {
   const msIntoInterval = nowMs % intervalMs;
-  // 若当前时间恰好落在边界上，则等待到下一个完整周期，避免重复扫描
   const msUntilClose =
     msIntoInterval === 0 ? intervalMs : intervalMs - msIntoInterval;
   return msUntilClose + bufferMs;
 }
 
-// ── 主调度器 ────────────────────────────────────────────────────────────────
+// ── 重载声明 ─────────────────────────────────────────────────────────────────
 
 export async function runScheduler(
   scanFn: () => Promise<unknown>,
-  options: SchedulerOptions = {},
+  options?: SchedulerOptions,
+  signal?: AbortSignal
+): Promise<void>;
+
+export async function runScheduler(
+  config: SchedulerV2Config,
+  signal: AbortSignal,
+  intervals?: SchedulerV2Intervals
+): Promise<void>;
+
+// ── 实现 ─────────────────────────────────────────────────────────────────────
+
+export async function runScheduler(
+  arg0: (() => Promise<unknown>) | SchedulerV2Config,
+  arg1?: SchedulerOptions | AbortSignal,
+  arg2?: AbortSignal | SchedulerV2Intervals
+): Promise<void> {
+  // 区分 V1 / V2：arg0 是函数则走 V1
+  if (typeof arg0 === "function") {
+    return runSchedulerV1(
+      arg0,
+      (arg1 as SchedulerOptions | undefined) ?? {},
+      (arg2 as AbortSignal | undefined)
+    );
+  } else {
+    return runSchedulerV2(
+      arg0,
+      arg1 as AbortSignal,
+      (arg2 as SchedulerV2Intervals | undefined) ?? {}
+    );
+  }
+}
+
+// ── V1 实现 ──────────────────────────────────────────────────────────────────
+
+async function runSchedulerV1(
+  scanFn: () => Promise<unknown>,
+  options: SchedulerOptions,
   signal?: AbortSignal
 ): Promise<void> {
   const {
-    intervalMs = 4 * 60 * 60 * 1000, // 4h
-    bufferMs = 30_000,                // 30s
+    intervalMs = 4 * 60 * 60 * 1000,
+    bufferMs = 30_000,
     alignToInterval = true,
     immediate = true,
   } = options;
 
   logger.info(
     { intervalMs, bufferMs, alignToInterval, immediate },
-    "Scheduler: starting"
+    "Scheduler V1: starting"
   );
 
-  // 启动后立即扫描一次
   if (immediate && !signal?.aborted) {
-    await executeScan(scanFn);
+    await safeCall("scan", scanFn);
   }
 
-  // 调度循环：持续运行直到收到 abort 信号
   while (!signal?.aborted) {
     const delay = alignToInterval
       ? msUntilNextBoundary(Date.now(), intervalMs, bufferMs)
@@ -94,43 +123,96 @@ export async function runScheduler(
     const nextAt = new Date(Date.now() + delay).toISOString();
     logger.info(
       { delaySeconds: Math.round(delay / 1000), nextAt },
-      "Scheduler: next scan scheduled"
+      "Scheduler V1: next scan scheduled"
     );
 
     const aborted = await sleep(delay, signal);
     if (aborted) break;
 
     if (!signal?.aborted) {
-      await executeScan(scanFn);
+      await safeCall("scan", scanFn);
     }
   }
 
-  logger.info("Scheduler: shutdown complete");
+  logger.info("Scheduler V1: shutdown complete");
 }
 
-// ── 内部辅助 ────────────────────────────────────────────────────────────────
+// ── V2 实现 ──────────────────────────────────────────────────────────────────
 
-async function executeScan(
-  scanFn: () => Promise<unknown>
+async function runSchedulerV2(
+  config: SchedulerV2Config,
+  signal: AbortSignal,
+  intervals: SchedulerV2Intervals
 ): Promise<void> {
-  logger.info("Scheduler: executing scan");
+  const {
+    scanIntervalMs = 4 * 60 * 60 * 1000,
+    monitorIntervalMs = 60_000,
+    sessionIntervalMs = 5 * 60 * 1000,
+    heartbeatIntervalMs = 30_000,
+  } = intervals;
+
+  logger.info(
+    { scanIntervalMs, monitorIntervalMs, sessionIntervalMs, heartbeatIntervalMs },
+    "Scheduler V2: starting"
+  );
+
+  // 启动时立即执行一次扫描
+  if (!signal.aborted) {
+    await safeCall("scan", () => config.onScan(config.scanSymbols));
+  }
+
+  const timers: ReturnType<typeof setInterval>[] = [];
+
+  timers.push(
+    setInterval(async () => {
+      if (!signal.aborted)
+        await safeCall("scan", () => config.onScan(config.scanSymbols));
+    }, scanIntervalMs)
+  );
+
+  timers.push(
+    setInterval(async () => {
+      if (!signal.aborted) await safeCall("monitor", config.onMonitor);
+    }, monitorIntervalMs)
+  );
+
+  timers.push(
+    setInterval(async () => {
+      if (!signal.aborted) await safeCall("session", config.onSession);
+    }, sessionIntervalMs)
+  );
+
+  timers.push(
+    setInterval(async () => {
+      if (!signal.aborted) await safeCall("heartbeat", config.onHeartbeat);
+    }, heartbeatIntervalMs)
+  );
+
+  await new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+
+  for (const t of timers) clearInterval(t);
+
+  logger.info("Scheduler V2: shutdown complete");
+}
+
+// ── 内部辅助 ─────────────────────────────────────────────────────────────────
+
+async function safeCall(
+  name: string,
+  fn: () => Promise<unknown>
+): Promise<void> {
+  logger.info(`Scheduler: executing ${name}`);
   try {
-    await scanFn();
-    logger.info("Scheduler: scan complete");
+    await fn();
+    logger.info(`Scheduler: ${name} complete`);
   } catch (err) {
-    logger.error(
-      { err },
-      "Scheduler: scan failed, will retry at next interval"
-    );
+    logger.error({ err }, `Scheduler: ${name} failed, will retry at next interval`);
   }
 }
 
-/**
- * 休眠指定毫秒数；若 `AbortSignal` 触发则立即结束等待。
- *
- * @returns 若因 abort 提前结束则返回 `true`，否则返回 `false`
- */
-function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(false), ms);
     if (signal) {
