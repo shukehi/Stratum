@@ -174,18 +174,18 @@ async function handleCommand(
         ? await options.fetchPerpPrice(req.symbol)
         : await options.fetchSpotPrice(req.symbol);
       return [
-        "Latest Price",
-        `Market: ${req.market}`,
-        `Symbol: ${req.symbol}`,
-        `Price: ${formatPrice(price)}`,
-        `At (UTC): ${formatUtcTime(Date.now())}`,
+        "最新价格",
+        `市场: ${req.market === "perp" ? "合约" : "现货"}`,
+        `交易对: ${req.symbol}`,
+        `价格: ${formatPrice(price)}`,
+        `时间 (UTC): ${formatUtcTime(Date.now())}`,
       ].join("\n");
     } catch {
-      return `Price fetch failed for ${req.symbol} (${req.market}).`;
+      return `获取 ${req.symbol} (${req.market}) 价格失败。`;
     }
   }
 
-  return "Unsupported command. Available: /help /status /positions /price [symbol] [market]";
+  return "不支持的指令。可用指令: /help /status /positions /price [代码] [市场]";
 }
 
 export function isCommandMessage(text: string): boolean {
@@ -243,25 +243,33 @@ function formatStatusMessage(
   margin: number
 ): string {
   const uptime = formatDuration(Date.now() - options.startedAt);
-  const currentSession = options.getCurrentSession() ?? "unknown";
+  const currentSession = options.getCurrentSession() ?? "未知";
   const lastScanAt = options.getLastScanAt();
-  const lastScanText = lastScanAt ? formatUtcTime(lastScanAt) : "not available";
+  const lastScanText = lastScanAt ? formatUtcTime(lastScanAt) : "无记录";
   return [
-    "Stratum Status",
-    `Version: ${options.version}`,
-    `Uptime: ${uptime}`,
-    `Total Equity: $${formatPrice(equity)}`,
-    `Available Margin: $${formatPrice(margin)}`,
-    `Perp Symbol: ${options.symbol}`,
-    `Spot Symbol: ${options.spotSymbol}`,
-    `Session: ${currentSession}`,
-    `Last Scan (UTC): ${lastScanText}`,
+    "Stratum 运行状态",
+    `版本: ${options.version}`,
+    `运行时间: ${uptime}`,
+    `总资产: $${formatPrice(equity)}`,
+    `可用余额: $${formatPrice(margin)}`,
+    `合约代码: ${options.symbol}`,
+    `现货代码: ${options.spotSymbol}`,
+    `当前时段: ${translateSession(currentSession)}`,
+    `最后扫描 (UTC): ${lastScanText}`,
   ].join("\n");
 }
 
+function translateSession(session: string): string {
+  if (session === "asian_low") return "亚洲低流动性";
+  if (session === "london_ramp") return "伦敦启动";
+  if (session === "london_ny_overlap") return "伦敦纽约重叠";
+  if (session === "ny_close") return "纽约尾盘";
+  return session;
+}
+
 function formatPositionsMessage(positions: OpenPosition[], currentPrices: number[]): string {
-  if (positions.length === 0) return "Open Positions: 0";
-  const lines: string[] = [`Open Positions: ${positions.length}`];
+  if (positions.length === 0) return "当前无持仓";
+  const lines: string[] = [`当前持仓: ${positions.length} 笔`];
   const maxItems = Math.min(positions.length, 8);
   for (let i = 0; i < maxItems; i++) {
     const p = positions[i];
@@ -269,7 +277,7 @@ function formatPositionsMessage(positions: OpenPosition[], currentPrices: number
     const entryMid = (p.entryLow + p.entryHigh) / 2;
 
     lines.push("");
-    lines.push(`${i + 1}. ${p.direction.toUpperCase()} ${p.symbol} (${p.timeframe})`);
+    lines.push(`${i + 1}. ${p.direction === "long" ? "多头" : "空头"} ${p.symbol} (${p.timeframe})`);
 
     if (currentPrice > 0) {
       const pnlPct = p.direction === "long"
@@ -280,34 +288,35 @@ function formatPositionsMessage(positions: OpenPosition[], currentPrices: number
 
       if (p.notionalSize) {
         const pnlAmt = (pnlPct / 100) * p.notionalSize;
-        lines.push(`PnL: ${emoji} ${sign}$${formatPrice(pnlAmt)} (${sign}${pnlPct.toFixed(2)}%)`);
-        lines.push(`Size: $${formatPrice(p.notionalSize)} | Mark: ${formatPrice(currentPrice)}`);
+        lines.push(`盈亏: ${emoji} ${sign}$${formatPrice(pnlAmt)} (${sign}${pnlPct.toFixed(2)}%)`);
+        lines.push(`仓位: $${formatPrice(p.notionalSize)} | 现价: ${formatPrice(currentPrice)}`);
       } else {
-        lines.push(`PnL: ${emoji} ${sign}${pnlPct.toFixed(2)}% | Mark: ${formatPrice(currentPrice)}`);
+        lines.push(`盈亏: ${emoji} ${sign}${pnlPct.toFixed(2)}% | 现价: ${formatPrice(currentPrice)}`);
       }
     } else {
-      if (p.notionalSize) lines.push(`Size: $${formatPrice(p.notionalSize)}`);
+      if (p.notionalSize) lines.push(`仓位: $${formatPrice(p.notionalSize)}`);
     }
 
-    lines.push(`Entry: ${formatPrice(p.entryLow)} - ${formatPrice(p.entryHigh)}`);
-    lines.push(`SL: ${formatPrice(p.stopLoss)} | TP: ${formatPrice(p.takeProfit)} | RR: ${p.riskReward.toFixed(1)}:1`);
-    lines.push(`Opened (UTC): ${formatUtcTime(p.openedAt)}`);
+    lines.push(`入场: ${formatPrice(p.entryLow)} - ${formatPrice(p.entryHigh)}`);
+    lines.push(`止损: ${formatPrice(p.stopLoss)} | 止盈: ${formatPrice(p.takeProfit)} | RR: ${p.riskReward.toFixed(1)}:1`);
+    lines.push(`开启时间 (UTC): ${formatUtcTime(p.openedAt)}`);
   }
   if (positions.length > maxItems) {
     lines.push("");
-    lines.push(`... and ${positions.length - maxItems} more`);
+    lines.push(`... 以及另外 ${positions.length - maxItems} 笔持仓`);
   }
   return lines.join("\n");
 }
 
 function formatHelpMessage(): string {
   return [
-    "Available Commands",
-    "/help - show this help message",
-    "/status - show runtime status",
-    "/positions - show open paper-trading positions",
-    "/price [symbol] [market] - latest price (market: perp|spot)",
-    "Examples:",
+    "可用指令",
+    "/help - 显示此帮助信息",
+    "/status - 显示运行状态及账户余额",
+    "/positions - 显示当前持仓及实时盈亏",
+    "/price [代码] [市场] - 查询最新价格 (市场: perp|spot)",
+    "",
+    "示例:",
     "/price BTC",
     "/price ETHUSDT spot",
     "/price symbol=BTCUSDT market=perp",
@@ -325,8 +334,12 @@ function formatDuration(ms: number): string {
   const totalMin = Math.floor(ms / 60_000);
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m}m`;
+  const d = Math.floor(h / 24);
+  const remainingH = h % 24;
+  
+  if (d > 0) return `${d}天 ${remainingH}小时 ${m}分`;
+  if (h > 0) return `${h}小时 ${m}分`;
+  return `${m}分`;
 }
 
 function formatUtcTime(ms: number): string {
