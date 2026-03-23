@@ -18,6 +18,7 @@ describe("run-scheduler (V2 Physics)", () => {
     const mockMonitor = vi.fn().mockResolvedValue({ closed: 0 });
     const controller = new AbortController();
 
+    // 运行一个极短的循环并退出
     setTimeout(() => controller.abort(), 100);
 
     await runScheduler(
@@ -29,7 +30,12 @@ describe("run-scheduler (V2 Physics)", () => {
         onHeartbeat: vi.fn(),
       },
       controller.signal,
-      { scanIntervalMs: 50, monitorIntervalMs: 50, sessionIntervalMs: 50, heartbeatIntervalMs: 50 }
+      { 
+        scanIntervalMs: 50, 
+        monitorIntervalMs: 50, 
+        sessionIntervalMs: 50, 
+        heartbeatIntervalMs: 50 
+      }
     );
 
     expect(mockScan).toHaveBeenCalled();

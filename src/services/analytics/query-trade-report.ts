@@ -3,7 +3,7 @@ import type { DailyBias } from "../../domain/market/daily-bias.js";
 import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 
 /**
- * 核心报表查询服务 (V2 Physics - Total Export Alignment)
+ * 核心报表查询服务 (V2 Physics - Final Export Alignment)
  */
 
 export type ScanLogRow = {
@@ -164,15 +164,20 @@ export function getWinRateByStructureType(db: Database.Database): WinRateRow[] {
 }
 
 export function getExecutionFunnelStats(db: Database.Database) {
+  const row = db.prepare(`
+    SELECT 
+      (SELECT COUNT(*) FROM positions WHERE status = 'open') as open_pos,
+      (SELECT COUNT(*) FROM positions WHERE status != 'open') as closed_pos
+  `).get() as any;
   return {
     totalSnapshots: 0,
     skippedExecutionGate: 0,
     skippedDuplicate: 0,
     failed: 0,
     sent: 0,
-    opened: 0,
-    openPositions: 0,
-    closedPositions: 0,
+    opened: (row.open_pos || 0) + (row.closed_pos || 0),
+    openPositions: row.open_pos || 0,
+    closedPositions: row.closed_pos || 0,
   };
 }
 
@@ -218,6 +223,12 @@ export function getOpenExposureByDirection(db: Database.Database): OpenExposureR
   `).all() as any[];
 }
 
+// ── 兼容性占位导出 ────────────────────────────────────────────────────────────
+export function getScanBreakdownByRegime(db: Database.Database): any[] { return []; }
+export function getScanBreakdownByParticipantPressure(db: Database.Database): any[] { return []; }
+export function getCandidateSnapshotBreakdownByConfirmationStatus(db: Database.Database): any[] { return []; }
+export function getCandidateSnapshotBreakdownByExecutionOutcome(db: Database.Database): any[] { return []; }
+export function getCandidateSnapshotBreakdownByExecutionReason(db: Database.Database): any[] { return []; }
 export function getExecutionBreakdownByRegime(db: Database.Database): ExecutionBreakdownRow[] { return []; }
 export function getExecutionBreakdownByParticipantPressure(db: Database.Database): ExecutionBreakdownRow[] { return []; }
 export function getOutcomeBreakdownByRegime(db: Database.Database): OutcomeBreakdownRow[] { return []; }
@@ -226,9 +237,6 @@ export function getOutcomeBreakdownByDailyBias(db: Database.Database): OutcomeBr
 export function getOutcomeBreakdownByOrderFlowBias(db: Database.Database): OutcomeBreakdownRow[] { return []; }
 export function getOutcomeBreakdownByLiquiditySession(db: Database.Database): OutcomeBreakdownRow[] { return []; }
 export function getRecentRiskSnapshots(db: Database.Database, limit = 10): any[] { return []; }
-export function getCandidateSnapshotBreakdownByExecutionOutcome(db: Database.Database): any[] { return []; }
-export function getCandidateSnapshotBreakdownByExecutionReason(db: Database.Database): any[] { return []; }
 export function getOutcomeWindowRows(db: Database.Database): any[] { return []; }
-export function getCandidateSnapshotBreakdownByConfirmationStatus(db: Database.Database): any[] { return []; }
 export function getPositionSizingStats(db: Database.Database): any { return { totalSnapshots: 0, sizedSnapshots: 0 }; }
 export const MIN_DECISIVE_CLOSED_TRADES_FOR_OUTCOME = 5;
