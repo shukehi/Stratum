@@ -126,6 +126,14 @@ async function main(): Promise<void> {
           getLastScanAt: () => lastScanAt,
           getCurrentSession: () => lastSession,
           getOpenPositions: () => getOpenPositions(db),
+          fetchTotalEquity: async () => {
+            const bal = await client.fetchBalance();
+            return bal.totalEquity;
+          },
+          fetchAvailableMargin: async () => {
+            const bal = await client.fetchBalance();
+            return bal.availableMargin;
+          },
           fetchPerpPrice: async (symbol: string) => {
             const ticker = await client.fetchTicker(symbol);
             return ticker.last;
@@ -158,8 +166,15 @@ async function main(): Promise<void> {
         getLastScanAt: () => lastScanAt,
         getCurrentSession: () => lastSession,
         getOpenPositions: () => getOpenPositions(db),
-        fetchPerpPrice: async (symbol: string) => {
-          const ticker = await client.fetchTicker(symbol);
+        fetchTotalEquity: async () => {
+          const bal = await client.fetchBalance();
+          return bal.totalEquity;
+        },
+        fetchAvailableMargin: async () => {
+          const bal = await client.fetchBalance();
+          return bal.availableMargin;
+        },
+        fetchPerpPrice: async (symbol: string) => {          const ticker = await client.fetchTicker(symbol);
           return ticker.last;
         },
         fetchSpotPrice: async (symbol: string) => {

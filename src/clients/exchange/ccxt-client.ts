@@ -15,6 +15,7 @@ export interface ExchangeClient {
   fetchOpenInterest(symbol: string, limit: number): Promise<OpenInterestPoint[]>;
   fetchTicker(symbol: string): Promise<{ last: number }>;
   fetchSpotTicker(symbol: string): Promise<{ last: number }>;
+  fetchBalance(): Promise<{ totalEquity: number; availableMargin: number }>;
 }
 
 type TickerLike = {
@@ -51,6 +52,7 @@ type ExchangeLike = {
     limit: number
   ): Promise<unknown[]>;
   fetchTicker(symbol: string): Promise<unknown>;
+  fetchBalance(): Promise<unknown>;
 };
 
 type ExchangeConstructor = new (options: { enableRateLimit: boolean }) => ExchangeLike;
@@ -160,6 +162,36 @@ export class CcxtClient implements ExchangeClient {
     } catch (err) {
       logger.warn({ symbol, err }, "fetchSpotTicker failed, returning default { last: 0 }");
       return { last: 0 };
+    }
+  }
+
+  async fetchBalance(): Promise<{ totalEquity: number; availableMargin: number }> {
+    try {
+      const ex = await this.getExchange();
+      const rawRes = await ex.fetchBalance();
+      const raw = asObject(rawRes) as {
+        info: Record<string, unknown>;
+        total: Record<string, unknown>;
+        free: Record<string, unknown>;
+      };
+
+      // 针对常见的合约交易所解析 (Binance, Bybit 等)
+      const totalEquity = toNumber(
+        raw.info?.equity ??
+        raw.info?.totalMarginBalance ??
+        raw.total?.["USDT"] ??
+        0
+      );
+      const availableMargin = toNumber(
+        raw.info?.availableBalance ??
+        raw.free?.["USDT"] ??
+        0
+      );
+
+      return { totalEquity, availableMargin };
+    } catch (err) {
+      logger.warn({ err }, "fetchBalance failed, returning zero");
+      return { totalEquity: 0, availableMargin: 0 };
     }
   }
 }
