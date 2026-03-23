@@ -103,7 +103,7 @@ export async function cmdBacktest(
 
   // ── 模拟交易 ──────────────────────────────────────────────────────────────
   process.stdout.write("  ⚙️  正在模拟交易...");
-  const trades = runBacktest(signals, candles4h);
+  const trades = runBacktest(signals, candles4h, strategyConfig);
   const stats  = computeStats(trades);
   process.stdout.write(" 完成\n");
 

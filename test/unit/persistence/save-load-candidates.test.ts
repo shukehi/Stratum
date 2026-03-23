@@ -40,7 +40,7 @@ function makeCtx(): MarketContext {
     regimeConfidence: 80,
     regimeReasons: [],
     participantBias: "balanced",
-    participantPressureType: "balanced",
+    participantPressureType: "none",
     participantConfidence: 80,
     participantRationale: "",
     spotPerpBasis: 0,
@@ -67,8 +67,8 @@ beforeEach(() => {
   initDb(db);
 });
 
-describe("save-load-candidates (V2 Physics)", () => {
-  it("saveCandidate: 成功保存 CVS 物理分值", () => {
+describe("save-load-candidates (V2 Physics - Fixed)", () => {
+  it("saveCandidate: 成功持久化 CVS 物理分值", () => {
     saveCandidate(db, makePayload({ capitalVelocityScore: 92.5 }));
     const row = db.prepare("SELECT capital_velocity_score FROM candidates").get() as any;
     expect(row.capital_velocity_score).toBe(92.5);
@@ -83,6 +83,7 @@ describe("save-load-candidates (V2 Physics)", () => {
   });
 
   it("findCandidate: 能够通过物理指纹找回信号", () => {
+    const now = Date.now();
     saveCandidate(db, makePayload({ symbol: "TARGET", entryHigh: 60000 }));
     const res = findCandidate(db, "TARGET", "long", "4h", 60000);
     expect(res).toBeDefined();
