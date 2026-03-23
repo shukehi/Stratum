@@ -64,16 +64,19 @@
 
 - [x] **Task 1: 零熵行动** - 已执行。物理删除冗余零件，彻底抹除 Macro/News/LLM 及其数据结构字段。
 - [x] **Task 2: 3-Sigma 引擎实现** - 已执行。实现并注入基于标准差的动态动能检测器。
-- [ ] **Task 3: 资本动能重构** - 待执行。废除 Grade，引入基于 CVS 的动态换仓逻辑。
+- [x] **Task 3: 资本动能重构** - 已执行。废除 Grade 标签，实现 CVS 驱动的资本置换逻辑。
 - [ ] **Task 4: FSD 全静默化** - 待执行。实现 100% 自动模拟执行闭环。
 
 ---
 
-### **Task 2 物理成果记录 (The Momentum Log)**
-*   **核心模块**：`src/services/analysis/detect-oi-crash.ts`
-*   **物理公式**：`Index = (Current_OI_Delta - Rolling_Mean) / Rolling_StdDev`
-*   **触发准则**：`Index < -3.0` (三倍标准差强坍缩)。
-*   **工程变动**：`Liquidity Sweep` 逻辑已与该引擎强制绑定。如果没有发生 3-Sigma 级别的持仓湮灭，任何几何学上的“价格穿刺”都将被系统冷酷过滤。
+### **Task 3 资本成果记录 (The Capital Log)**
+*   **核心物理量**：`Capital_Velocity_Score (CVS)`
+*   **计算公式**：`CVS = StructureScore * AlignmentMultiplier * RR_Bonus * ConfirmationFactor`
+    *   *乘数因子*：Regime & Participant 完美对齐 (1.2x)，RR > 3.0 (1.1x)，确认挂起 (0.8x)。
+*   **置换协议 (CSP)**：
+    *   物理逻辑：资本像真空一样自动流向 EV 最高点。
+    *   触发门槛：当新信号 `CVS_new > CVS_old_worst * 1.2` 且持仓超限时，系统自动执行 **“平旧开新”**。
+    *   目标：消除禀赋效应，最大化单位时间的资本周转期望。
 
 
 ---

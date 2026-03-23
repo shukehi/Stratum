@@ -35,7 +35,7 @@ export type OpenPosition = {
   stopLoss: number;
   takeProfit: number;
   riskReward: number;
-  signalGrade: TradeCandidate["signalGrade"];
+  capitalVelocityScore: number;
   openedAt: number;   // Unix 毫秒时间戳，通常等于告警发送时间
   status: PositionStatus;
   notionalSize?: number; // 开仓时的名义金额 (美元价值)

@@ -1,20 +1,15 @@
 import type { StructuralSetup } from "../../domain/signal/structural-setup.js";
 import type { MarketContext } from "../../domain/market/market-context.js";
 import type { MarketRegime } from "../../domain/regime/market-regime.js";
-import type { TradeCandidate, SignalGrade } from "../../domain/signal/trade-candidate.js";
+import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { StrategyConfig } from "../../app/config.js";
 import type { DailyBias } from "../../domain/market/daily-bias.js";
 import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import { computeRiskReward } from "../risk/compute-risk-reward.js";
-import { evaluateExposureGate } from "../risk/evaluate-exposure-gate.js";
 
 /**
- * 共识引擎入参  (PHASE_06)
- *
- * baselineAtr:       4h 平均真实波幅，用于止损距离门槛（可选）
- * openLongCount:     当前已开多头仓位数，用于相关性暴露控制（可选，默认 0）
- * openShortCount:    当前已开空头仓位数（可选，默认 0）
+ * 共识引擎入参  (V3 Physics Refactor)
  */
 export type ConsensusInput = {
   symbol: string;
@@ -22,60 +17,48 @@ export type ConsensusInput = {
   ctx: MarketContext;
   config: StrategyConfig;
   baselineAtr?: number;
-  openLongCount?: number;
-  openShortCount?: number;
-  openLongRiskPercent?: number;
-  openShortRiskPercent?: number;
-  portfolioOpenRiskPercent?: number;
-  /** 日线趋势偏向（PHASE_16）— 未传入时跳过日线过滤 */
+  /** 日线趋势偏向 */
   dailyBias?: DailyBias;
-  /** CVD 订单流偏向（PHASE_18）— 未传入时跳过订单流过滤 */
+  /** CVD 订单流偏向 */
   orderFlowBias?: OrderFlowBias;
 };
 
 /**
- * 共识引擎  (PHASE_06)
+ * 信号周转期望 (CVS) 计算器  (V3 - Physics Refactor)
+ * 
+ * 公式：
+ *   CVS = StructureScore * AlignmentMultiplier * RR_Bonus * ConfirmationFactor
+ */
+function computeCVS(
+  setup: StructuralSetup,
+  regimeAligned: boolean,
+  participantAligned: boolean,
+  rr: number,
+  ctx: MarketContext
+): number {
+  let multiplier = 1.0;
+  // 对齐度加权
+  if (regimeAligned && participantAligned) multiplier = 1.2;
+  else if (!regimeAligned && !participantAligned) multiplier = 0.8;
+
+  let baseScore = setup.structureScore * multiplier;
+
+  // RR 奖励 (追求高周转率)
+  if (rr >= 3.0) baseScore *= 1.1;
+
+  // 状态惩罚 (不确定性熵)
+  if (setup.confirmationStatus === "pending") baseScore *= 0.8;
+  if (ctx.reasonCodes.includes("SESSION_LOW_LIQUIDITY_DISCOUNT")) baseScore *= 0.9;
+
+  return Math.round(baseScore * 100) / 100;
+}
+
+/**
+ * 共识引擎  (V3)
  *
  * 职责:
- *   综合 MarketContext + StructuralSetup 列表，通过有序门槛过滤后生成 TradeCandidate[]。
- *
- * 门槛顺序（第一性原理，越早越关键）:
- *   1. invalidated     → 直接丢弃（结构已失效，不输出任何候选）
- *   2. DELEVERAGING_VACUUM in ctx → 丢弃（去杠杆真空期）
- *   3. structureScore < minStructureScore → 丢弃（结构质量不足）
- *   4. 弱参与者 + 低结构分   → 丢弃（参与者置信度不足以支撑低结构分信号）
- *   5. RR < minimumRiskReward → 丢弃（风险回报比不达标）
- *   6. 止损过宽 (ATR 可用时) → 丢弃（止损距离超过 maxStopDistanceAtr × ATR）
- *   7. 相关性暴露超限       → 丢弃（同向已有仓位数超过 maxCorrelatedSignalsPerDirection）
- *
- * 方向校准:
- *   isRegimeAligned:
- *     trend / range → true
- *     high-volatility → false（噪音过高）
- *     event-driven   → config.allowEventDrivenSignals
- *
- *   isParticipantAligned:
- *     做多 + squeeze-risk → true  (空头被挤，顺势做多)
- *     做空 + flush-risk   → true  (多头被清，顺势做空)
- *     balanced            → true  (中性，不干扰)
- *     做多 + flush-risk   → false (多头被清，逆势做多)
- *     做空 + squeeze-risk → false (空头被挤，逆势做空)
- *
- * 信号等级算法（先计算基础等级，再应用上限）:
- *   基础等级:
- *     score ≥ 80 AND regimeAligned AND participantAligned AND hasConfluence → high-conviction
- *     score ≥ 65 AND (regimeAligned OR participantAligned)                 → standard
- *     otherwise                                                            → watch
- *
- *   上限（顺序应用，只降不升）:
- *     confirmationStatus === "pending"          → 上限 watch
- *     participantConfidence < min (弱参与者)    → 上限 watch
- *     SESSION_LOW_LIQUIDITY_DISCOUNT 存在       → 降一级（high-conviction→standard, standard→watch）
- *
- * 禁止:
- *   - 不输出最终仓位 (由 compute-position-size 单独处理)
- *   - 不访问 LLM / 宏观语义（PHASE_07 职责）
- *   - 不接数据库
+ *   综合 MarketContext + StructuralSetup 列表，计算 CVS 并生成 TradeCandidate[]。
+ *   不再拦截持仓限额，拦截逻辑下移至执行置换层。
  */
 export function evaluateConsensus(input: ConsensusInput): TradeCandidate[] {
   return analyzeConsensus(input).candidates;
@@ -86,11 +69,6 @@ export function analyzeConsensus(
 ): { candidates: TradeCandidate[]; skipReasonCode?: ReasonCode } {
   const { symbol, setups, ctx, config } = input;
   const baselineAtr = input.baselineAtr;
-  const openLongCount = input.openLongCount ?? 0;
-  const openShortCount = input.openShortCount ?? 0;
-  const openLongRiskPercent = input.openLongRiskPercent ?? 0;
-  const openShortRiskPercent = input.openShortRiskPercent ?? 0;
-  const portfolioOpenRiskPercent = input.portfolioOpenRiskPercent ?? 0;
 
   const inVacuum = ctx.reasonCodes.includes("DELEVERAGING_VACUUM");
   const regimeAligned = isRegimeAligned(ctx.regime, config);
@@ -99,43 +77,26 @@ export function analyzeConsensus(
   const rejectedReasons: ReasonCode[] = [];
 
   for (const setup of setups) {
-    // ── 门槛 1: 结构已失效 ───────────────────────────────────────────────────
+    // ── 1. 物理硬过滤 (不符合物理规律的信号直接丢弃) ───────────────────────────
     if (setup.confirmationStatus === "invalidated") {
       rejectedReasons.push("STRUCTURE_CONFIRMATION_INVALIDATED");
       continue;
     }
-
-    // ── 门槛 2: 去杠杆真空期 ─────────────────────────────────────────────────
     if (inVacuum) {
       rejectedReasons.push("DELEVERAGING_VACUUM");
       continue;
     }
-
-    // ── 门槛 3: 结构分数不足 ─────────────────────────────────────────────────
     if (setup.structureScore < config.minStructureScore) {
       rejectedReasons.push("STRUCTURE_SCORE_TOO_LOW");
       continue;
     }
 
-    // ── 门槛 4: 弱参与者 + 低结构分（高结构分可覆盖弱参与者信号）───────────────
-    const weakParticipant =
-      ctx.participantConfidence < config.minParticipantConfidence;
-    if (
-      weakParticipant &&
-      setup.structureScore < config.minStructureScoreForWeakParticipantOverride
-    ) {
-      rejectedReasons.push("PARTICIPANT_CONFIDENCE_TOO_LOW");
-      continue;
-    }
-
-    // ── 门槛 5: 风险回报比不足 ───────────────────────────────────────────────
     const rr = computeRiskReward(setup);
     if (rr < config.minimumRiskReward) {
       rejectedReasons.push("RISK_REWARD_TOO_LOW");
       continue;
     }
 
-    // ── 门槛 6: 止损距离过宽（ATR 可用时才检查）─────────────────────────────
     if (baselineAtr !== undefined && baselineAtr > 0) {
       const stopDistance =
         setup.direction === "long"
@@ -147,100 +108,9 @@ export function analyzeConsensus(
       }
     }
 
-    // ── 门槛 7: 相关性暴露超限 ───────────────────────────────────────────────
-    if (
-      setup.direction === "long" &&
-      openLongCount >= config.maxCorrelatedSignalsPerDirection
-    ) {
-      rejectedReasons.push("CORRELATED_EXPOSURE_LIMIT");
-      continue;
-    }
-
-    if (
-      setup.direction === "short" &&
-      openShortCount >= config.maxCorrelatedSignalsPerDirection
-    ) {
-      rejectedReasons.push("CORRELATED_EXPOSURE_LIMIT");
-      continue;
-    }
-
-    const exposureGate = evaluateExposureGate({
-      sameDirectionExposureCount:
-        setup.direction === "long" ? openLongCount : openShortCount,
-      sameDirectionOpenRiskPercent:
-        setup.direction === "long" ? openLongRiskPercent : openShortRiskPercent,
-      portfolioOpenRiskPercent,
-      config,
-    });
-    if (!exposureGate.allowed) {
-      rejectedReasons.push(exposureGate.reasonCode);
-      continue;
-    }
-
-    // ── 方向校准 ─────────────────────────────────────────────────────────────
-    const participantAligned = isParticipantAligned(
-      setup.direction,
-      ctx.participantPressureType
-    );
-
-    // ── 信号等级：基础等级 ───────────────────────────────────────────────────
-    const hasConfluence = setup.confluenceFactors.length >= 2;
-    let grade = computeBaseGrade(
-      setup.structureScore,
-      regimeAligned,
-      participantAligned,
-      hasConfluence
-    );
-
-    // ── 信号等级：上限修正 ───────────────────────────────────────────────────
-    if (setup.confirmationStatus === "pending") {
-      grade = "watch";
-    } else if (weakParticipant) {
-      grade = "watch";
-    } else if (setup.reasonCodes.includes("SESSION_LOW_LIQUIDITY_DISCOUNT")) {
-      grade = downgradeGrade(grade);
-    }
-
-    // ── 日线趋势过滤（PHASE_16）：逆势降级 ──────────────────────────────────
-    const { dailyBias } = input;
-    let dailyTrendCode: ReasonCode | null = null;
-    if (dailyBias && dailyBias !== "neutral") {
-      const isCounter =
-        (setup.direction === "long"  && dailyBias === "bearish") ||
-        (setup.direction === "short" && dailyBias === "bullish");
-      if (isCounter) {
-        grade = downgradeGrade(grade);
-        dailyTrendCode = "DAILY_TREND_COUNTER";
-      } else {
-        dailyTrendCode = "DAILY_TREND_ALIGNED";
-      }
-    }
-
-    // ── 订单流确认（PHASE_18）：CVD 逆势降级 ─────────────────────────────────
-    // CVD 反映主动买卖力量对比，与信号方向相反时说明订单流不支持该方向
-    const { orderFlowBias } = input;
-    let orderFlowCode: ReasonCode | null = null;
-    if (orderFlowBias && orderFlowBias !== "neutral") {
-      const isCounter =
-        (setup.direction === "long"  && orderFlowBias === "bearish") ||
-        (setup.direction === "short" && orderFlowBias === "bullish");
-      if (isCounter) {
-        grade = downgradeGrade(grade);
-        orderFlowCode = "ORDER_FLOW_COUNTER";
-      } else {
-        orderFlowCode = "ORDER_FLOW_ALIGNED";
-      }
-    }
-
-    // ── 合并 reasonCodes ──────────────────────────────────────────────────────
-    const mergedCodes: ReasonCode[] = [
-      ...new Set([
-        ...setup.reasonCodes,
-        ...ctx.reasonCodes,
-        ...(dailyTrendCode  ? [dailyTrendCode]  : []),
-        ...(orderFlowCode   ? [orderFlowCode]   : []),
-      ]),
-    ];
+    // ── 2. 计算物理期望 (CVS) ────────────────────────────────────────────────
+    const pAligned = isParticipantAligned(setup.direction, ctx.participantPressureType);
+    const cvs = computeCVS(setup, regimeAligned, pAligned, rr, ctx);
 
     candidates.push({
       symbol,
@@ -252,87 +122,40 @@ export function analyzeConsensus(
       takeProfit: setup.takeProfitHint,
       riskReward: rr,
       regimeAligned,
-      participantAligned,
+      participantAligned: pAligned,
       structureReason: setup.structureReason,
       contextReason: ctx.summary,
-      signalGrade: grade,
-      reasonCodes: mergedCodes,
+      capitalVelocityScore: cvs,
+      reasonCodes: [...setup.reasonCodes],
     });
   }
 
+  if (candidates.length > 0) {
+    return { candidates };
+  }
+
   return {
-    candidates,
-    skipReasonCode:
-      candidates.length === 0
-        ? mostCommonReason(rejectedReasons)
-        : undefined,
+    candidates: [],
+    skipReasonCode: rejectedReasons[0] ?? "STRUCTURE_NO_SETUP",
   };
 }
 
 // ── 内部辅助 ──────────────────────────────────────────────────────────────────
 
 function isRegimeAligned(regime: MarketRegime, config: StrategyConfig): boolean {
-  switch (regime) {
-    case "trend":
-    case "range":
-      return true;
-    case "high-volatility":
-      return false;
-    case "event-driven":
-      return config.allowEventDrivenSignals;
-  }
+  if (regime === "trend" || regime === "range") return true;
+  if (regime === "event-driven") return config.allowEventDrivenSignals;
+  return false; // high-volatility 等状态不建议入场
 }
 
 function isParticipantAligned(
   direction: "long" | "short",
-  pressureType: "squeeze-risk" | "flush-risk" | "none"
+  pressureType: string
 ): boolean {
-  if (pressureType === "none") return true;
-  if (direction === "long" && pressureType === "squeeze-risk") return true;   // 空头被挤，顺势
-  if (direction === "short" && pressureType === "flush-risk") return true;    // 多头被清，顺势
-  return false; // 逆势
-}
-
-function computeBaseGrade(
-  score: number,
-  regimeAligned: boolean,
-  participantAligned: boolean,
-  hasConfluence: boolean
-): SignalGrade {
-  if (
-    score >= 80 &&
-    regimeAligned &&
-    participantAligned &&
-    hasConfluence
-  ) {
-    return "high-conviction";
+  if (pressureType === "balanced") return true;
+  if (direction === "long") {
+    return pressureType === "squeeze-risk";
+  } else {
+    return pressureType === "flush-risk";
   }
-  if (score >= 65 && (regimeAligned || participantAligned)) {
-    return "standard";
-  }
-  return "watch";
-}
-
-function downgradeGrade(grade: SignalGrade): SignalGrade {
-  if (grade === "high-conviction") return "standard";
-  if (grade === "standard") return "watch";
-  return "watch";
-}
-
-function mostCommonReason(reasons: ReasonCode[]): ReasonCode | undefined {
-  if (reasons.length === 0) return undefined;
-  const counts = new Map<ReasonCode, number>();
-  for (const reason of reasons) {
-    counts.set(reason, (counts.get(reason) ?? 0) + 1);
-  }
-
-  let bestReason = reasons[0];
-  let bestCount = counts.get(bestReason) ?? 0;
-  for (const [reason, count] of counts) {
-    if (count > bestCount) {
-      bestReason = reason;
-      bestCount = count;
-    }
-  }
-  return bestReason;
 }

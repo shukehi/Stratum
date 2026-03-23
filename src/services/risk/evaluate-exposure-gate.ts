@@ -1,59 +1,70 @@
 import type { StrategyConfig } from "../../app/config.js";
 import type { ReasonCode } from "../../domain/common/reason-code.js";
+import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
+import type { OpenPosition } from "../../domain/position/open-position.js";
 
 /**
- * 暴露度闸门（组合级风险约束）。
+ * 资本置换协议 (Capital Swapping Protocol - CSP)  (V3 - Physics First)
  *
  * 职责：
- *   在候选信号进入最终下单阶段前，检查同向拥挤度与组合总风险，
- *   避免系统在相同方向连续加仓，或让总开放风险超出预设上限。
+ *   不再简单地拦截信号，而是对比“新信号”与“现持仓”的 CVS。
+ *   如果新信号具备显著更高的周转期望，则触发“平旧开新”。
  */
+
+export type SwappingDecision = 
+  | { action: "allow_direct" } // 风险未超限，直接开仓
+  | { action: "allow_swap"; targetPositionId: string; reason: string } // 风险超限，但新信号更强，平掉旧的
+  | { action: "block"; reasonCode: ReasonCode; reason: string }; // 风险超限且新信号不够强，拦截
+
 export type ExposureGateInput = {
-  /** 当前同方向已持有仓位数量。 */
-  sameDirectionExposureCount: number;
-  /** 当前同方向所有已开仓位累计风险占账户权益的比例。 */
-  sameDirectionOpenRiskPercent: number;
-  /** 当前整个组合所有已开仓位累计风险占账户权益的比例。 */
+  candidate: TradeCandidate;
+  openPositions: OpenPosition[];
   portfolioOpenRiskPercent: number;
-  /** 风控配置。 */
   config: StrategyConfig;
 };
 
 /**
- * 按“数量上限 → 同向风险上限 → 组合风险上限”的顺序检查是否允许新增仓位。
+ * 执行资本置换判定
  */
-export function evaluateExposureGate(
+export function evaluateSwappingGate(
   input: ExposureGateInput
-): { allowed: true } | { allowed: false; reasonCode: ReasonCode } {
-  const {
-    sameDirectionExposureCount,
-    sameDirectionOpenRiskPercent,
-    portfolioOpenRiskPercent,
-    config,
-  } = input;
+): SwappingDecision {
+  const { candidate, openPositions, portfolioOpenRiskPercent, config } = input;
 
-  // 先限制同方向持仓个数，阻止明显拥挤的同向暴露。
-  if (
-    sameDirectionExposureCount >= config.maxCorrelatedSignalsPerDirection
-  ) {
-    return { allowed: false, reasonCode: "CORRELATED_EXPOSURE_LIMIT" };
+  // 1. 检查总体账户风险是否还有余量
+  const hasGlobalBuffer = (portfolioOpenRiskPercent + config.riskPerTrade) <= config.maxPortfolioOpenRiskPercent;
+  
+  // 2. 检查同向持仓是否未达上限
+  const sameDirCount = openPositions.filter(p => p.direction === candidate.direction).length;
+  const hasSameDirBuffer = sameDirCount < config.maxCorrelatedSignalsPerDirection;
+
+  if (hasGlobalBuffer && hasSameDirBuffer) {
+    return { action: "allow_direct" };
   }
 
-  // 再检查新增一笔后，同方向累计风险是否越过上限。
-  if (
-    sameDirectionOpenRiskPercent + config.riskPerTrade >
-    config.maxSameDirectionOpenRiskPercent
-  ) {
-    return { allowed: false, reasonCode: "SAME_DIRECTION_RISK_LIMIT" };
+  // ── 3. 资本置换逻辑 (Capital Swapping) ───────────────────────────────────
+  
+  // 寻找场内最弱的头寸（CVS 最低且显著低于新信号）
+  const weakestPosition = openPositions
+    .filter(p => p.direction === candidate.direction) // 优先置换同向
+    .sort((a, b) => a.capitalVelocityScore - b.capitalVelocityScore)[0];
+
+  if (weakestPosition) {
+    // 门槛：新信号 CVS 必须比旧信号高出至少 20%
+    const SWAP_THRESHOLD_RATIO = 1.2;
+    if (candidate.capitalVelocityScore > weakestPosition.capitalVelocityScore * SWAP_THRESHOLD_RATIO) {
+      return { 
+        action: "allow_swap", 
+        targetPositionId: weakestPosition.id,
+        reason: `资本置换：新信号 CVS(${candidate.capitalVelocityScore}) 显著优于旧仓位 CVS(${weakestPosition.capitalVelocityScore})`
+      };
+    }
   }
 
-  // 最后检查整个平台组合风险，避免多方向合计后过度暴露。
-  if (
-    portfolioOpenRiskPercent + config.riskPerTrade >
-    config.maxPortfolioOpenRiskPercent
-  ) {
-    return { allowed: false, reasonCode: "PORTFOLIO_RISK_LIMIT" };
-  }
-
-  return { allowed: true };
+  // 4. 彻底拦截
+  return { 
+    action: "block", 
+    reasonCode: !hasGlobalBuffer ? "PORTFOLIO_RISK_LIMIT" : "CORRELATED_EXPOSURE_LIMIT",
+    reason: `风险超限且新信号动能不足以触发置换 (CVS: ${candidate.capitalVelocityScore})`
+  };
 }
