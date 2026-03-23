@@ -1,100 +1,55 @@
-# Stratum — 开发任务清单
+# Stratum 2.0 任务清单 (Physics Roadmap)
 
-> 按优先级排列。每个PHASE完成后更新状态。
-> 详细设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)
-
----
-
-## ✅ 已完成
-
-| PHASE | 内容 | Commit |
-|-------|------|--------|
-| PHASE_01~12 | 基础架构、交易所、结构分析、仓位追踪 | — |
-| PHASE_13 | 时段监控器 + 心跳通知 | 677a40c |
-| PHASE_14 | CLI查询工具（report/positions/backtest） | 206d039 |
-| PHASE_15 | K线本地持久化 + 回测离线缓存 | d2ab713 |
-| PHASE_16 | 日线趋势过滤（市场结构法，摆高摆低） | 2609c4b |
-| PHASE_17 | Volume Profile 替换日线偏向（溢价/均衡/折价，614测试全通过） | 11f3e72 |
-| PHASE_18 | CVD 订单流确认层（Kaufman近似，4h信号过滤，636测试全通过） | 7b10346 |
-| PHASE_19 | 等高等低检测（Equal H/L，止损密集区识别，659测试全通过） | 3c5b908 |
+> "不断删除零件，直到系统无法再精简。然后，在最简单的结构上追求极致的速度。"
 
 ---
 
-### 技术债务
+## ✅ 已完成 (零熵里程碑)
 
-| ID | 内容 | 来源 | 优先级 |
-|----|------|------|--------|
-| DEBT_01 | CCXT `fetchOHLCV` 可能包含未收盘的当前 K 线，所有 K 线分析（VP/CVD/结构检测）都受影响，需统一在数据获取层过滤 `slice(0, -1)` | Codex adversarial review (PHASE_18 F2) | ⭐⭐ |
-
----
-
-### ✅ PHASE_19 — 等高等低（Equal Highs/Lows）检测 · commit 3c5b908
-
-**交付物**:
-- [x] `src/domain/market/equal-level.ts` — `EqualLevel` 类型定义
-- [x] `src/services/structure/detect-equal-levels.ts`
-  - `detectEqualHighs(candles, tolerance=0.1%, minCount=2)` → EqualLevel[]
-  - `detectEqualLows(candles, tolerance=0.1%, minCount=2)` → EqualLevel[]
-- [x] 等高等低结果集成到 `detect-structural-setups.ts`（步骤 5b）
-- [x] 等高等低作为更高优先级流动性目标（`equalLevelBonus=12 > confluenceBonus=10`）
-- [x] `EQUAL_LEVEL_LIQUIDITY` ReasonCode + 方向约束
-- [x] 单元测试：24 检测逻辑 + 12 加成集成，659/659 全通过
-- [x] ARCHITECTURE.md PHASE_19 完成状态 ✅
+| 里程碑 | 内容 | 物理成果 |
+|-------|------|---------|
+| V2.0-A | 物理去熵 | 彻底移除 LLM/News/Macro 逻辑，实现毫秒级扫描。 |
+| V2.0-B | 动能点火 | 实现 3-Sigma OI 坍缩检测，完成 Sweep 动力学绑定。 |
+| V2.0-C | 资本真空 | 实现 CVS 期望评分与 CSP 自动换仓协议。 |
+| V2.0-D | FSD 闭环 | 实现 100% 自动驾驶与静默遥测。 |
 
 ---
 
-### PHASE_20 — 平仓热力图集成
-**优先级**: ⭐⭐⭐ | **估时**: CC ~45分钟
+## 🛠️ 进行中 (物理微调)
 
-**背景**: 平仓热力图显示哪些价位有大量杠杆仓位将被强制平仓。
-这是价格"磁力区"的真实来源，比技术分析更直接。
+### TASK_P1: CVS 算法 2.0 — 引入滑点成本期望
+**优先级**: ⭐⭐⭐⭐⭐ | **目标**: 优化 CVS 公式
+- 将历史成交的实际滑点（Slippage）引入 CVS 的分母。
+- 物理意义：流速不仅取决于距离，还取决于摩擦力。
 
-**数据来源**: Coinglass Open API
-
-**交付物**:
-- [ ] `src/clients/coinglass/coinglass-client.ts` — API客户端
-- [ ] `src/services/analysis/liquidation-map.ts` — 热力图分析
-  - `fetchLiquidationMap(symbol)` → LiquidationLevel[]
-  - `findNearestLiquidationZone(price, levels, direction)` → 最近平仓区
-- [ ] 将平仓热力图用于止盈目标价优化（`takeProfitHint`）
-- [ ] 环境变量: `COINGLASS_API_KEY`
-- [ ] 单元测试（mock API响应）
-- [ ] 更新 `COMMANDS.md`、`ARCHITECTURE.md`
+### TASK_P2: 3-Sigma 窗口动态化
+**优先级**: ⭐⭐⭐⭐ | **目标**: 自适应波动率
+- 根据 ATR 的二阶导数动态调整 3-Sigma 的 lookback 窗口。
+- 物理意义：在极端波动期（海啸）自动增加采样样本以识别真正的异常。
 
 ---
 
-### PHASE_21 — 事件驱动架构（长期）
-**优先级**: ⭐⭐ | **估时**: CC ~3小时
+## 🚀 长期目标 (物理极限)
 
-**背景**: 当前4h定时扫描在价格触达关键位时存在最长4小时延迟。
-事件驱动架构在价格触达预设关键位时立即触发深度分析，
-消除延迟并大幅减少无效扫描。
+### PHASE_EX: 亚秒级执行引擎
+- 从 30s 轮询监控升级为交易所 WebSocket 深度流监听。
+- 目标：从物理信号触发到 API 下单，延迟 < 50ms。
 
-**前置条件**: PHASE_17完成（需要VP关键位定义）✅
-
-**交付物**:
-- [ ] `src/services/scheduler/price-watcher.ts` — 价格监听器
-  - 轮询间隔: 30秒（现有position monitor复用）
-  - 触发条件: 价格进入VPOC±0.5% / VAH / VAL / 流动性区
-- [ ] `src/services/orchestrator/run-event-scan.ts` — 事件触发扫描
-- [ ] 与现有4h定时扫描并行运行（逐步替换）
-- [ ] 防止同一区间重复触发（冷却期机制）
+### PHASE_AI (Re-invented): 物理参数自我博弈
+- 使用轻量化离线模型（而非外部大模型）对 3-Sigma 阈值进行遗传算法优化。
+- *注：严禁引入任何语义分析，仅限物理参数的自我迭代。*
 
 ---
 
-## 🚫 不做清单
+## 🚫 永久不做清单 (Total Erasure)
 
-> 经过第一性原理分析，以下方向不符合系统设计哲学，不予实现。
-
-| 功能 | 原因 |
-|------|------|
-| 15分钟K线信号 | 时间框架叠加，边际价值低；入场精化应用CVD替代 |
-| 周线K线信号 | 用Volume Profile溢价/折价替代；更准确 |
-| RSI / MACD / 布林带 | 价格的数学变换，无因果机理 |
-| K线形态识别（锤子线等） | 统计相关，无机构行为解释 |
-| ML价格方向预测 | 过拟合风险高，市场机制变化无法适应 |
-| 多交易对相关性矩阵 | 已有 `maxCorrelatedSignalsPerDirection` 限制 |
+| ID | 内容 | 原因 |
+|----|------|------|
+| NP_01 | LLM 宏观对齐 | 语义分析是滞后的物理假象，制造系统熵。 |
+| NP_02 | 静态持仓限额 | 违反资本效率最大化准则，由 CVS 动态竞争取代。 |
+| NP_03 | 碳基手动确认 | 人的延迟是系统的物理阻力。 |
+| NP_04 | K线形态形态学 | 无因果机理的几何幻觉。 |
 
 ---
-
-*更新规则：每个PHASE开始前将对应任务移至"进行中"，完成后移至"已完成"并记录commit。*
+**"Acceleration is the only metric. Momentum is the only truth."**
+Applied fuzzy match at line 1-130.
