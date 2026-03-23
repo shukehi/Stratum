@@ -27,6 +27,7 @@ export type TelegramCommandBotOptions = {
   getLastScanAt: () => number | null;
   getCurrentSession: () => LiquiditySession | null;
   getOpenPositions: () => OpenPosition[];
+  accountSize: number;
   fetchTotalEquity: () => Promise<number>;
   fetchAvailableMargin: () => Promise<number>;
   fetchPerpPrice: (symbol: string) => Promise<number>;
@@ -246,12 +247,15 @@ function formatStatusMessage(
   const currentSession = options.getCurrentSession() ?? "未知";
   const lastScanAt = options.getLastScanAt();
   const lastScanText = lastScanAt ? formatUtcTime(lastScanAt) : "无记录";
+  const isSimulated = equity === options.accountSize && margin === options.accountSize;
+  const suffix = isSimulated ? " (模拟)" : "";
+
   return [
     "Stratum 运行状态",
     `版本: ${options.version}`,
     `运行时间: ${uptime}`,
-    `总资产: $${formatPrice(equity)}`,
-    `可用余额: $${formatPrice(margin)}`,
+    `总资产: $${formatPrice(equity)}${suffix}`,
+    `可用余额: $${formatPrice(margin)}${suffix}`,
     `合约代码: ${options.symbol}`,
     `现货代码: ${options.spotSymbol}`,
     `当前时段: ${translateSession(currentSession)}`,

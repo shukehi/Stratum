@@ -123,6 +123,9 @@ describe("startTelegramCommandBot integration", () => {
       getLastScanAt: () => null,
       getCurrentSession: () => "london_ny_overlap",
       getOpenPositions: () => [],
+      accountSize: 10000,
+      fetchTotalEquity: async () => 10000,
+      fetchAvailableMargin: async () => 10000,
       fetchPerpPrice: async () => 60000,
       fetchSpotPrice: async () => 59900,
     });
@@ -145,6 +148,8 @@ describe("startTelegramCommandBot integration", () => {
 
     const sentBody = JSON.parse(String(sendCalls[0][1]?.body ?? "{}")) as Record<string, unknown>;
     const sentText = String(sentBody.text ?? "");
-    expect(sentText).toContain("Stratum Status");
+    expect(sentText).toContain("Stratum 运行状态");
+    expect(sentText).toContain("总资产: $10,000 (模拟)");
+    expect(sentText).toContain("可用余额: $10,000 (模拟)");
   });
 });

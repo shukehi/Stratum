@@ -126,13 +126,15 @@ async function main(): Promise<void> {
           getLastScanAt: () => lastScanAt,
           getCurrentSession: () => lastSession,
           getOpenPositions: () => getOpenPositions(db),
+          accountSize: env.ACCOUNT_SIZE,
           fetchTotalEquity: async () => {
             const bal = await client.fetchBalance();
-            return bal.totalEquity;
+            // 如果交易所返回 0 (通常是因为未配置 API Key 处于模拟模式)，则回退到环境变量配置的 ACCOUNT_SIZE
+            return bal.totalEquity > 0 ? bal.totalEquity : env.ACCOUNT_SIZE;
           },
           fetchAvailableMargin: async () => {
             const bal = await client.fetchBalance();
-            return bal.availableMargin;
+            return bal.availableMargin > 0 ? bal.availableMargin : env.ACCOUNT_SIZE;
           },
           fetchPerpPrice: async (symbol: string) => {
             const ticker = await client.fetchTicker(symbol);
