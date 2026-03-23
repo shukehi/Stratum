@@ -1,7 +1,9 @@
 import type { Candle } from "../../domain/market/candle.js";
+import type { OpenInterestPoint } from "../../domain/market/open-interest.js";
 import type { StructuralSetup } from "../../domain/signal/structural-setup.js";
 import type { StrategyConfig } from "../../app/config.js";
 import { clamp } from "../../utils/math.js";
+import { detectOiCrash } from "../analysis/detect-oi-crash.js";
 
 /**
  * Swing 高点/低点类型
@@ -14,12 +16,6 @@ export type SwingPoint = {
 
 /**
  * 识别 Swing 高低点（N 根左右对称局部极值）
- *
- * 条件:
- *   Swing Low: c[i].low < c[i-j].low && c[i].low < c[i+j].low  (j = 1..lookback)
- *   Swing High: c[i].high > c[i-j].high && c[i].high > c[i+j].high
- *
- * @param lookback 左右各比较的 K 线数量（默认 3）
  */
 export function detectSwingPoints(candles: Candle[], lookback = 3): SwingPoint[] {
   const points: SwingPoint[] = [];
@@ -44,37 +40,34 @@ export function detectSwingPoints(candles: Candle[], lookback = 3): SwingPoint[]
 }
 
 /**
- * 流动性扫描检测 (Liquidity Sweep)  (PHASE_05)
+ * 流动性扫描检测 (Liquidity Sweep)  (PHASE_05 - V3 Physics Refactor)
  *
- * 触发条件（4h 收盘确认，严格区分于 FVG 回踩）:
- *   看涨扫描: 最近 K 线低价穿透前期 swing low，且 4h 收盘价回到 swing low 之上
- *   看跌扫描: 最近 K 线高价穿透前期 swing high，且 4h 收盘价回到 swing high 之下
+ * 物理准则：
+ *   Sweep 不是价格刺穿，而是“能量湮灭”。
+ *   必须满足：(价格刺穿 + 4h收回) && (OI 发生 3-Sigma 级别的坍缩)。
  *
- * 无效情形（直接跳过，不生成 setup）:
- *   穿透 swing low 但收盘仍在 swing low 之下 → LIQUIDITY_SWEEP_REJECTED
- *
- * 第一性原理: 止损单堆积在前期 swing 高低点附近，流动性扫描是庄家
- * 触发这些止损后反向建仓的行为。收盘确认是关键——只有价格主动
- * 收回原 swing 水平才说明扫描完成、方向已定。
- *
- * 扫描检测窗口: 最近 sweepWindow 根 K 线（默认 5）作为候选扫描 K 线；
- * swing 点从更早的 candles 中识别，不与扫描 K 线重叠。
+ * 如果没有 OI 坍缩，说明庄家没有在这里触发大规模强平，只是普通的震荡。
  */
 export function detectLiquiditySweep(
   candles: Candle[],
   config: StrategyConfig,
+  oiPoints: OpenInterestPoint[] = [],
   sweepWindow = 5
 ): StructuralSetup[] {
   if (candles.length < 10) return [];
 
-  const results: StructuralSetup[] = [];
+  const oiResult = detectOiCrash(oiPoints);
+  if (!oiResult.isCrash) {
+    // 马斯克指令：没有能量释放，就没有信号。
+    return [];
+  }
 
+  const results: StructuralSetup[] = [];
   // 基准 ATR
   const baselineAtr =
     candles.slice(-50).reduce((sum, c) => sum + (c.high - c.low), 0) /
       Math.min(50, candles.length) || 1;
 
-  // swing 点从 sweepWindow 之前的 K 线中识别（不与候选扫描 K 线重叠）
   const swingCandles = candles.slice(0, -(sweepWindow));
   if (swingCandles.length < 6) return [];
 
@@ -88,7 +81,6 @@ export function detectLiquiditySweep(
     .sort((a, b) => a.price - b.price);
 
   for (const sweepCandle of recentCandles) {
-    // 同一根扫描 K 线若同时刺破多个 swing low，只保留离当前价格最近的那个代表性流动性池。
     const matchedLow = lowSwings.find((swing) =>
       sweepCandle.low < swing.price && sweepCandle.close > swing.price
     );
@@ -100,7 +92,10 @@ export function detectLiquiditySweep(
       const riskDist = entryHigh - stopLossHint;
       const takeProfitHint = entryHigh + riskDist * config.minimumRiskReward;
       const sweepRatio = sweepDepth / baselineAtr;
-      const structureScore = clamp(Math.round(65 + sweepRatio * 20), 0, 100);
+      
+      // 动能加成：crashIndex 越负，能量越强
+      const momentumBonus = Math.abs(oiResult.crashIndex) * 5;
+      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus), 0, 100);
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
@@ -111,8 +106,8 @@ export function detectLiquiditySweep(
         takeProfitHint,
         structureScore,
         structureReason:
-          `看涨流动性扫描: 刺破swing low ${matchedLow.price.toFixed(0)}, ` +
-          `4h收回 (sweep=${(sweepRatio * 100).toFixed(1)}%ATR)`,
+          `看涨流动性扫荡(物理确认): 刺破 ${matchedLow.price.toFixed(0)} | ` +
+          `${oiResult.reason} | 能量指数: ${oiResult.crashIndex.toFixed(1)}R`,
         invalidationReason: `1h收盘跌破 ${stopLossHint.toFixed(0)}`,
         confluenceFactors: ["liquidity-sweep"],
         confirmationStatus: "pending",
@@ -121,7 +116,6 @@ export function detectLiquiditySweep(
       });
     }
 
-    // 看跌方向对称：若同一根 K 线刺破多个 swing high，只保留最近的代表性高点。
     const matchedHigh = highSwings.find((swing) =>
       sweepCandle.high > swing.price && sweepCandle.close < swing.price
     );
@@ -133,7 +127,9 @@ export function detectLiquiditySweep(
       const riskDist = stopLossHint - entryLow;
       const takeProfitHint = entryLow - riskDist * config.minimumRiskReward;
       const sweepRatio = sweepDepth / baselineAtr;
-      const structureScore = clamp(Math.round(65 + sweepRatio * 20), 0, 100);
+
+      const momentumBonus = Math.abs(oiResult.crashIndex) * 5;
+      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus), 0, 100);
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
@@ -144,8 +140,8 @@ export function detectLiquiditySweep(
         takeProfitHint,
         structureScore,
         structureReason:
-          `看跌流动性扫描: 刺破swing high ${matchedHigh.price.toFixed(0)}, ` +
-          `4h收回 (sweep=${(sweepRatio * 100).toFixed(1)}%ATR)`,
+          `看跌流动性扫荡(物理确认): 刺破 ${matchedHigh.price.toFixed(0)} | ` +
+          `${oiResult.reason} | 能量指数: ${oiResult.crashIndex.toFixed(1)}R`,
         invalidationReason: `1h收盘涨破 ${stopLossHint.toFixed(0)}`,
         confluenceFactors: ["liquidity-sweep"],
         confirmationStatus: "pending",

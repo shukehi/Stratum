@@ -62,10 +62,19 @@
 
 ## 🛠️ 实施路线图 (Zero Compromise Plan)
 
-- [ ] **Task 1: 零熵行动** - 执行物理删除，重构核心数据结构。
-- [ ] **Task 2: 3-Sigma 引擎实现** - 开发并注入基于标准差的动态动能检测器。
-- [ ] **Task 3: 资本调度器重写** - 实现基于 CVS 的动态换仓逻辑。
-- [ ] **Task 4: FSD 全静默化** - 移除所有人工确认逻辑，实现闭环执行。
+- [x] **Task 1: 零熵行动** - 已执行。物理删除冗余零件，彻底抹除 Macro/News/LLM 及其数据结构字段。
+- [x] **Task 2: 3-Sigma 引擎实现** - 已执行。实现并注入基于标准差的动态动能检测器。
+- [ ] **Task 3: 资本动能重构** - 待执行。废除 Grade，引入基于 CVS 的动态换仓逻辑。
+- [ ] **Task 4: FSD 全静默化** - 待执行。实现 100% 自动模拟执行闭环。
+
+---
+
+### **Task 2 物理成果记录 (The Momentum Log)**
+*   **核心模块**：`src/services/analysis/detect-oi-crash.ts`
+*   **物理公式**：`Index = (Current_OI_Delta - Rolling_Mean) / Rolling_StdDev`
+*   **触发准则**：`Index < -3.0` (三倍标准差强坍缩)。
+*   **工程变动**：`Liquidity Sweep` 逻辑已与该引擎强制绑定。如果没有发生 3-Sigma 级别的持仓湮灭，任何几何学上的“价格穿刺”都将被系统冷酷过滤。
+
 
 ---
 **"Acceleration is the only thing that matters. Do not add. Only delete."**

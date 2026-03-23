@@ -260,7 +260,7 @@ export async function runSignalScan(
   }
 
   // ── PHASE_05: 结构触发检测 ─────────────────────────────────────────────
-  const structuralAnalysis = analyzeStructuralSetups(candles4h, candles1h, ctx, config);
+  const structuralAnalysis = analyzeStructuralSetups(candles4h, candles1h, ctx, config, openInterest);
   const setups = structuralAnalysis.setups;
   logger.debug({ setupCount: setups.length }, "PHASE_05 done");
 

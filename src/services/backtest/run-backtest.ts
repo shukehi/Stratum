@@ -97,7 +97,7 @@ export function generateBacktestSignals(
 
   for (let i = minHistory; i < candles4h.length; i++) {
     const slice4h = candles4h.slice(0, i + 1);
-    const setups = detectStructuralSetups(slice4h, candles1h, neutralCtx, config, precomputedEqualLevels);
+    const setups = detectStructuralSetups(slice4h, candles1h, neutralCtx, config, [], precomputedEqualLevels);
 
     for (const setup of setups) {
       if (setup.confirmationStatus === "invalidated") continue;
@@ -192,7 +192,7 @@ export async function generateFullChainBacktestSignals(
       ...detectEqualLows(slice4h, config.equalLevelTolerance),
     ];
 
-    const structuralAnalysis = analyzeStructuralSetups(slice4h, slice1h, ctx, config, precomputedEqualLevels);
+    const structuralAnalysis = analyzeStructuralSetups(slice4h, slice1h, ctx, config, oiSlice, precomputedEqualLevels);
     const setups = structuralAnalysis.setups;
     if (setups.length === 0) continue;
 

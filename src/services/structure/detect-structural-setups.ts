@@ -11,6 +11,8 @@ import { applySessionAdjustment } from "./apply-session-adjustment.js";
 import { detectEqualHighs, detectEqualLows } from "./detect-equal-levels.js";
 import type { EqualLevel } from "../../domain/market/equal-level.js";
 
+import type { OpenInterestPoint } from "../../domain/market/open-interest.js";
+
 /**
  * 结构触发层主入口  (PHASE_05)
  *
@@ -20,7 +22,7 @@ import type { EqualLevel } from "../../domain/market/equal-level.js";
  * 本函数职责:
  *   1. 真空期或低状态置信度 → 直接返回空数组
  *   2. 检测 FVG（4h，不与 sweep 共用逻辑）
- *   3. 检测流动性扫描（4h）
+ *   3. 检测流动性扫描（4h）- 需要 OI 物理确认 (V3)
  *   4. 应用复合结构评分（confluence）
  *   5. 应用交易时段修正
  *   6. 应用 1h 入场确认
@@ -37,11 +39,7 @@ export function detectStructuralSetups(
   candles1h: Candle[],
   ctx: MarketContext,
   config: StrategyConfig,
-  /**
-   * 可选：预计算的等高等低区域（供回测循环使用以避免 O(n²log n) 回归）。
-   * 若提供，则跳过内部的 detectEqualHighs/detectEqualLows 调用。
-   * 时效过滤仍会在内部按当前 K 线时间执行，确保加成准确。
-   */
+  oiPoints: OpenInterestPoint[] = [],
   precomputedEqualLevels?: EqualLevel[],
 ): StructuralSetup[] {
   return analyzeStructuralSetups(
@@ -49,6 +47,7 @@ export function detectStructuralSetups(
     candles1h,
     ctx,
     config,
+    oiPoints,
     precomputedEqualLevels
   ).setups;
 }
@@ -58,6 +57,7 @@ export function analyzeStructuralSetups(
   candles1h: Candle[],
   ctx: MarketContext,
   config: StrategyConfig,
+  oiPoints: OpenInterestPoint[] = [],
   precomputedEqualLevels?: EqualLevel[],
 ): { setups: StructuralSetup[]; skipReasonCode?: ReasonCode } {
   // ── 1. 真空期：去杠杆真空期内跳过所有结构信号 ───────────────────────────
@@ -73,8 +73,8 @@ export function analyzeStructuralSetups(
   // ── 3. 检测 FVG（仅 4h，与 sweep 完全独立） ────────────────────────────
   const fvgSetups = detectFvg(candles4h, "4h", config);
 
-  // ── 4. 检测流动性扫描（4h 收盘确认）──────────────────────────────────────
-  const sweepSetups = detectLiquiditySweep(candles4h, config);
+  // ── 4. 检测流动性扫描（4h 收盘确认）- V3 PHYSICS ENFORCED ─────────────────
+  const sweepSetups = detectLiquiditySweep(candles4h, config, oiPoints);
 
   // ── 5. 合并并应用复合结构加分 ─────────────────────────────────────────────
   const combined = [...fvgSetups, ...sweepSetups];
