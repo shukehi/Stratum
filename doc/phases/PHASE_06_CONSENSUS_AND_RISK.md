@@ -43,9 +43,9 @@
    - `riskReward`
 5. 实现 `confirmationStatus` 过滤规则：
    - 只有 `confirmed` 的 setup 进入正式评级
-   - `pending` 的 setup 最高只能输出 `watch` 级别预警
+   - `pending` 的 setup 最高只能输出 `Low CVS (<65)` 级别预警
    - `invalidated` 的 setup 直接丢弃
-6. 实现 `watch`、`standard`、`high-conviction` 分级。
+6. 实现 `Low CVS (<65)`、`Median CVS (65-85)`、`High CVS (>85)` 分级。
 7. 实现配置化的 skip / downgrade 规则。
 8. 在 `src/domain/common/reason-code.ts` 中补充共识层与风控层需要的 `ReasonCode`，并为每个候选附加 `reasonCodes`。
 
@@ -62,5 +62,5 @@
 - `structureScore < minStructureScore` 被过滤。
 - `riskReward < minimumRiskReward` 被过滤。
 - `confirmationStatus === "invalidated"` 被丢弃。
-- `confirmationStatus === "pending"` 最高只能输出 `watch`。
-- 弱参与者但强结构最多只能输出 `watch`。
+- `confirmationStatus === "pending"` 最高只能输出 `Low CVS (<65)`。
+- 弱参与者但强结构最多只能输出 `Low CVS (<65)`。

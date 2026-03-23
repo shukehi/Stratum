@@ -51,7 +51,7 @@
    - `dailyBias`
    - `orderFlowBias`
    - regime / participant 快照
-2. 即使 candidate 被宏观 block，也要保留到数据库中，并标记为 `blocked_by_macro`。
+2. 即使 candidate 被宏观 block，也要保留到数据库中，并标记为 `insufficient_velocity`。
 3. 对“没有 candidate”的扫描周期保存结构化 skip 信息，而不是只保存汇总计数。
 4. 重构回测，让其按真实顺序重放：
    - regime
@@ -66,7 +66,7 @@
    - confirmation status
    - confluence count
    - basis divergence
-   - macro action
+   - velocity check
    - skip stage
 
 ## 6. 禁止事项
@@ -80,10 +80,10 @@
 
 - 所有无信号扫描周期都具备结构化 skip reason。
 - 所有被 block 的 candidate 都能在数据库中查询到。
-- 可以单独统计 `blocked_by_macro` 样本的后验胜率。
+- 可以单独统计 `insufficient_velocity` 样本的后验胜率。
 - 全链路回测结果与实时执行的过滤顺序一致。
 - analytics 能输出至少以下报表：
   - 按 regime 分组
   - 按 participant pressure 分组
-  - 按 macro action 分组
+  - 按 velocity check 分组
   - 按 confirmation status 分组

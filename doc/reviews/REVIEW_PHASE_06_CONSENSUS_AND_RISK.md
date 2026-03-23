@@ -13,9 +13,9 @@
 ## 3. 工程复审问题
 
 1. 共识层是否检查 `regimeConfidence`、`participantConfidence`、`structureScore`、`confirmationStatus`、`riskReward`。
-2. `watch / standard / high-conviction` 是否配置化。
+2. `Low CVS (<65) / Median CVS (65-85) / High CVS (>85)` 是否配置化。
 3. `reasonCodes` 是否正确向 `TradeCandidate` 传播。
-4. `confirmationStatus === "pending"` 是否强制输出 `watch`。
+4. `confirmationStatus === "pending"` 是否强制输出 `Low CVS (<65)`。
 5. `confirmationStatus === "invalidated"` 是否直接丢弃。
 
 ## 4. 第一性原理复审问题
@@ -23,7 +23,7 @@
 1. 顺序是否仍然是 `state -> participants -> structure -> risk`。
 2. 是否存在任何地方让结构层绕过前置层。
 3. 风控是否真的能阻断信号，而不是仅作说明。
-4. 弱参与者但强结构时，是否只降级为 `watch`，而不是照常放行。
+4. 弱参与者但强结构时，是否只降级为 `Low CVS (<65)`，而不是照常放行。
 5. 是否只有在入场区域被"确认"后才产生正式信号，而不是触碰即触发。
 6. `minimumRiskReward` 是否有胜率推导锚点（见主文档 §15.0），而不是拍脑袋的偏好值。
 

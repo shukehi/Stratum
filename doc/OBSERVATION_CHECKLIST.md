@@ -86,7 +86,7 @@ pnpm positions
 
 重点看：
 
-- `blocked_by_macro`
+- `insufficient_velocity`
 - `sent`
 - `opened`
 

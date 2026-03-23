@@ -43,7 +43,7 @@
 ### Spec 1: 物理清除清单
 - **Files**: `rm -rf src/services/macro src/domain/macro test/unit/macro`.
 - **Types**: 重写 `src/domain/signal/trade-candidate.ts` 和 `src/domain/position/open-position.ts`。
-- **Logic**: 移除 `run-signal-scan.ts` 中所有涉及 Macro 的同步/异步逻辑。
+- **Logic**: 移除 `run-signal-scan.ts` 中所有涉及 Physics 的同步/异步逻辑。
 
 ### Spec 2: 3-Sigma 检测器
 - **Window**: 最近 50 根 4h K 线。
@@ -62,7 +62,7 @@
 
 ## 🛠️ 实施路线图 (Zero Compromise Plan)
 
-- [x] **Task 1: 零熵行动** - 已执行。物理删除冗余零件，彻底抹除 Macro/News/LLM 及其数据结构字段。
+- [x] **Task 1: 零熵行动** - 已执行。物理删除冗余零件，彻底抹除 Physics/News/LLM 及其数据结构字段。
 - [x] **Task 2: 3-Sigma 引擎实现** - 已执行。实现并注入基于标准差的动态动能检测器。
 - [x] **Task 3: 资本动能重构** - 已执行。废除 Grade 标签，实现 CVS 驱动的资本置换逻辑。
 - [x] **Task 4: FSD 全静默化** - 已执行。彻底移除 Telegram 的审批依赖，实现 "No news is good news" 的 100% 自动模拟执行闭环。
