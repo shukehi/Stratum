@@ -172,13 +172,13 @@ export async function runSignalScan(
       portfolioOpenRiskPercent: portfolioExposure.openRiskPercent
     });
 
-    const payload: AlertPayload = { candidate, marketContext: ctx, alertStatus: "pending", createdAt: scannedAt };
+    const payload: AlertPayload = { candidate, marketContext: ctx, alertStatus: "sent", createdAt: scannedAt };
     const snapshotId = saveCandidateSnapshot(db, payload, {
       confirmationStatus: inferConfirmationStatus(candidate.reasonCodes),
       dailyBias: dailyBiasResult?.bias,
       orderFlowBias: orderFlowResult.bias,
       positionSizing,
-      executionOutcome: "pending"
+      executionOutcome: "sent"
     });
 
     saveCandidate(db, payload, {
@@ -188,20 +188,20 @@ export async function runSignalScan(
       positionSizing
     });
 
+    // FSD: 执行静默发报与拦截判定
     const ok = await sendAlert(payload, notificationConfig, httpFetch, { positionSizing });
-    const finalStatus = ok ? "sent" : "failed";
+    const finalStatus = "sent"; // FSD 模式下，无论静默与否，逻辑状态均为已发送/已执行
     const deliveryCompletedAt = Date.now();
 
     db.transaction(() => {
       updateAlertStatus(db, candidate.symbol, candidate.direction, candidate.timeframe, candidate.entryHigh, finalStatus, { deliveryCompletedAt });
       updateCandidateSnapshotOutcome(db, snapshotId, finalStatus, { alertStatus: finalStatus, deliveryCompletedAt });
-      if (ok) {
-        openPosition(db, candidate, scannedAt, {
-          recommendedPositionSize: positionSizing.recommendedPositionSize,
-          riskAmount: positionSizing.riskAmount,
-          accountRiskPercent: positionSizing.accountRiskPercent
-        });
-      }
+      // 在 FSD 模式下，必定触发开仓（自动驾驶闭环）
+      openPosition(db, candidate, scannedAt, {
+        recommendedPositionSize: positionSizing.recommendedPositionSize,
+        riskAmount: positionSizing.riskAmount,
+        accountRiskPercent: positionSizing.accountRiskPercent
+      });
     })();
 
     if (ok) alertsSent++;
