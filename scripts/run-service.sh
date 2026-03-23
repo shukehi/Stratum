@@ -28,4 +28,5 @@ else
   exit 1
 fi
 
-exec "${PNPM_CMD[@]}" dev
+# 生产环境：直接运行编译后的物理代码，消除 tsx 带来的内存熵
+exec node dist/index.js

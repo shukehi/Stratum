@@ -86,31 +86,14 @@ echo "Running verification..."
 echo "Update succeeded."
 echo "Log file: ${LOG_FILE}"
 
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$SERVICE_NAME" >/dev/null 2>&1; then
   echo "Restarting $SERVICE_NAME..."
   if [[ "${EUID}" -eq 0 ]]; then
     systemctl restart "$SERVICE_NAME"
-  else
-    sudo systemctl restart "$SERVICE_NAME"
-  fi
-  echo "Following logs..."
-  if [[ "${EUID}" -eq 0 ]]; then
     systemctl status "$SERVICE_NAME" --no-pager
   else
+    sudo systemctl restart "$SERVICE_NAME"
     sudo systemctl status "$SERVICE_NAME" --no-pager
   fi
 else
-  cat <<EOF
-
-Update complete.
-Log file: ${LOG_FILE}
-
-No systemd unit named '$SERVICE_NAME' was detected.
-If you run Stratum manually, start it with:
-  pnpm dev
-
-If the unit exists under another name, run:
-  SERVICE_NAME=<your-unit>.service bash ./scripts/update-vps.sh
-
-EOF
+  echo "Update complete. (No systemd service detected to restart)"
 fi

@@ -52,12 +52,12 @@ cat <<EOF
 VPS preflight complete.
 
 Next steps:
-  1. Review .env and fill optional API keys if needed.
-  2. Start a one-off smoke run:
+  1. Review .env (ensure EXCHANGE and SYMBOL are correct).
+  2. Start a physics-validation smoke run (Backtest):
        corepack pnpm backtest --symbol BTCUSDT --limit 300
-  3. Start the long-running scheduler:
+  3. Start the FSD Silent Mode (Long-running):
        sudo ./scripts/boot.sh --logs
-  4. Or install the systemd service:
+  4. Or install the systemd service for 24/7 vigil:
        sudo ./scripts/install-systemd-service.sh
 
 EOF
