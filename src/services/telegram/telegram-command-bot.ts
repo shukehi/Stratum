@@ -27,6 +27,8 @@ export type TelegramCommandBotOptions = {
   getLastScanAt: () => number | null;
   getCurrentSession: () => LiquiditySession | null;
   getOpenPositions: () => OpenPosition[];
+  fetchTotalEquity: () => Promise<number>;
+  fetchAvailableMargin: () => Promise<number>;
   fetchPerpPrice: (symbol: string) => Promise<number>;
   fetchSpotPrice: (symbol: string) => Promise<number>;
 };
@@ -143,8 +145,21 @@ async function handleCommand(
 
   const command = normalizeCommand(parts[0]);
   if (command === "/help") return formatHelpMessage();
-  if (command === "/status") return formatStatusMessage(options);
-  if (command === "/positions") return formatPositionsMessage(options.getOpenPositions());
+  if (command === "/status") {
+    const [equity, margin] = await Promise.all([
+      options.fetchTotalEquity().catch(() => 0),
+      options.fetchAvailableMargin().catch(() => 0),
+    ]);
+    return formatStatusMessage(options, equity, margin);
+  }
+  if (command === "/positions") {
+    const positions = options.getOpenPositions();
+    if (positions.length === 0) return "Open Positions: 0";
+    const prices = await Promise.all(
+      positions.map((p) => options.fetchPerpPrice(p.symbol).catch(() => 0))
+    );
+    return formatPositionsMessage(positions, prices);
+  }
 
   if (command === "/price") {
     const args = parsePriceArgs(parts.slice(1));
@@ -222,7 +237,11 @@ export function parsePriceArgs(args: string[]): { symbol: string | null; market:
   return { symbol, market };
 }
 
-function formatStatusMessage(options: TelegramCommandBotOptions): string {
+function formatStatusMessage(
+  options: TelegramCommandBotOptions,
+  equity: number,
+  margin: number
+): string {
   const uptime = formatDuration(Date.now() - options.startedAt);
   const currentSession = options.getCurrentSession() ?? "unknown";
   const lastScanAt = options.getLastScanAt();
@@ -231,6 +250,8 @@ function formatStatusMessage(options: TelegramCommandBotOptions): string {
     "Stratum Status",
     `Version: ${options.version}`,
     `Uptime: ${uptime}`,
+    `Total Equity: $${formatPrice(equity)}`,
+    `Available Margin: $${formatPrice(margin)}`,
     `Perp Symbol: ${options.symbol}`,
     `Spot Symbol: ${options.spotSymbol}`,
     `Session: ${currentSession}`,
@@ -238,14 +259,36 @@ function formatStatusMessage(options: TelegramCommandBotOptions): string {
   ].join("\n");
 }
 
-function formatPositionsMessage(positions: OpenPosition[]): string {
+function formatPositionsMessage(positions: OpenPosition[], currentPrices: number[]): string {
   if (positions.length === 0) return "Open Positions: 0";
   const lines: string[] = [`Open Positions: ${positions.length}`];
   const maxItems = Math.min(positions.length, 8);
   for (let i = 0; i < maxItems; i++) {
     const p = positions[i];
+    const currentPrice = currentPrices[i];
+    const entryMid = (p.entryLow + p.entryHigh) / 2;
+
     lines.push("");
     lines.push(`${i + 1}. ${p.direction.toUpperCase()} ${p.symbol} (${p.timeframe})`);
+
+    if (currentPrice > 0) {
+      const pnlPct = p.direction === "long"
+        ? (currentPrice / entryMid - 1) * 100
+        : (1 - currentPrice / entryMid) * 100;
+      const emoji = pnlPct >= 0 ? "🟢" : "🔴";
+      const sign = pnlPct >= 0 ? "+" : "";
+
+      if (p.notionalSize) {
+        const pnlAmt = (pnlPct / 100) * p.notionalSize;
+        lines.push(`PnL: ${emoji} ${sign}$${formatPrice(pnlAmt)} (${sign}${pnlPct.toFixed(2)}%)`);
+        lines.push(`Size: $${formatPrice(p.notionalSize)} | Mark: ${formatPrice(currentPrice)}`);
+      } else {
+        lines.push(`PnL: ${emoji} ${sign}${pnlPct.toFixed(2)}% | Mark: ${formatPrice(currentPrice)}`);
+      }
+    } else {
+      if (p.notionalSize) lines.push(`Size: $${formatPrice(p.notionalSize)}`);
+    }
+
     lines.push(`Entry: ${formatPrice(p.entryLow)} - ${formatPrice(p.entryHigh)}`);
     lines.push(`SL: ${formatPrice(p.stopLoss)} | TP: ${formatPrice(p.takeProfit)} | RR: ${p.riskReward.toFixed(1)}:1`);
     lines.push(`Opened (UTC): ${formatUtcTime(p.openedAt)}`);

@@ -38,6 +38,7 @@ export type OpenPosition = {
   signalGrade: TradeCandidate["signalGrade"];
   openedAt: number;   // Unix 毫秒时间戳，通常等于告警发送时间
   status: PositionStatus;
+  notionalSize?: number; // 开仓时的名义金额 (美元价值)
   closedAt?: number;  // Unix 毫秒时间戳，仅在仓位已平仓时存在
   closePrice?: number;
   pnlR?: number;      // 平仓后填充
