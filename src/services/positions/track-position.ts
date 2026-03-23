@@ -4,7 +4,7 @@ import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import { buildId } from "../persistence/save-candidate.js";
 
 /**
- * 仓位跟踪服务 (PHASE_10-B - V2 Physics)
+ * 仓位跟踪服务 (PHASE_10-B - V2 Physics + BE)
  */
 
 export function openPosition(
@@ -25,12 +25,12 @@ export function openPosition(
     INSERT OR REPLACE INTO positions (
       id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
-      capital_velocity_score, opened_at, status, updated_at,
+      capital_velocity_score, opened_at, status, be_activated, updated_at,
       recommended_position_size, recommended_base_size, risk_amount, account_risk_percent
     ) VALUES (
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
-      ?, ?, 'open', ?,
+      ?, ?, 'open', 0, ?,
       ?, ?, ?, ?
     )
   `).run(
@@ -42,6 +42,19 @@ export function openPosition(
     options.riskAmount ?? null,
     options.accountRiskPercent ?? null
   );
+}
+
+export function activateBreakEven(
+  db: Database.Database,
+  positionId: string,
+  newStopLoss: number
+): void {
+  const now = Date.now();
+  db.prepare(`
+    UPDATE positions
+    SET stop_loss = ?, be_activated = 1, updated_at = ?
+    WHERE id = ?
+  `).run(newStopLoss, now, positionId);
 }
 
 export function closePosition(
@@ -121,6 +134,7 @@ function mapRowToOpenPosition(row: any): OpenPosition {
     capitalVelocityScore: row.capital_velocity_score,
     openedAt: row.opened_at,
     status: row.status,
+    beActivated: row.be_activated === 1, // 物理映射
     notionalSize: row.notional_size || undefined,
     closedAt: row.closed_at || undefined,
     closePrice: row.close_price || undefined,

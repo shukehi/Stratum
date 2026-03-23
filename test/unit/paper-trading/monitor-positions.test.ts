@@ -32,16 +32,18 @@ beforeEach(() => {
   initPositionsDb(db);
 });
 
-describe("monitor-positions (V2 Physics)", () => {
+describe("monitor-positions (V3 Physics)", () => {
+  const symbol = "BTCUSDT";
+
   it("价格触及 TP 应触发自动平仓", async () => {
-    const c = makeCandidate({ entryHigh: 60000, takeProfit: 62000, stopLoss: 58000 });
+    const c = makeCandidate({ symbol, entryHigh: 60000, takeProfit: 62000, stopLoss: 58000 });
     openPosition(db, c, Date.now());
 
     const mockClient = {
       fetchTicker: vi.fn().mockResolvedValue({ last: 63000 }), // 价格越过 TP
     };
 
-    const result = await monitorPositions(db, mockClient as any, {});
+    const result = await monitorPositions(db, mockClient as any, symbol);
     expect(result.closed).toBe(1);
     
     const open = getOpenPositions(db);
@@ -49,26 +51,26 @@ describe("monitor-positions (V2 Physics)", () => {
   });
 
   it("价格触及 SL 应触发自动平仓", async () => {
-    const c = makeCandidate({ entryHigh: 60000, takeProfit: 62000, stopLoss: 58000 });
+    const c = makeCandidate({ symbol, entryHigh: 60000, takeProfit: 62000, stopLoss: 58000 });
     openPosition(db, c, Date.now());
 
     const mockClient = {
       fetchTicker: vi.fn().mockResolvedValue({ last: 57000 }), // 价格跌破 SL
     };
 
-    const result = await monitorPositions(db, mockClient as any, {});
+    const result = await monitorPositions(db, mockClient as any, symbol);
     expect(result.closed).toBe(1);
   });
 
   it("价格在区间内不触发平仓", async () => {
-    const c = makeCandidate({ entryHigh: 60000, takeProfit: 65000, stopLoss: 55000 });
+    const c = makeCandidate({ symbol, entryHigh: 60000, takeProfit: 65000, stopLoss: 55000 });
     openPosition(db, c, Date.now());
 
     const mockClient = {
       fetchTicker: vi.fn().mockResolvedValue({ last: 60000 }),
     };
 
-    const result = await monitorPositions(db, mockClient as any, {});
+    const result = await monitorPositions(db, mockClient as any, symbol);
     expect(result.closed).toBe(0);
   });
 });

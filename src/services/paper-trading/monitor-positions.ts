@@ -1,133 +1,97 @@
 import Database from "better-sqlite3";
 import type { ExchangeClient } from "../../clients/exchange/ccxt-client.js";
 import type { OpenPosition } from "../../domain/position/open-position.js";
-import { getOpenPositions, closePosition } from "../positions/track-position.js";
+import { getOpenPositions, closePosition, activateBreakEven } from "../positions/track-position.js";
 import { logger } from "../../app/logger.js";
-import {
-  hasNotificationChannel,
-  sendTextNotification,
-  type NotificationConfig,
-} from "../alerting/send-notification.js";
 
 /**
- * 模拟交易仓位监控器  (PHASE_11)
- *
+ * 模拟交易仓位监控器 (V3 Physics + FSD Silent)
+ * 
  * 职责：
- *   每次调用时从交易所获取当前价格，检查所有 open 仓位
- *   是否触及 TP 或 SL，触及则自动平仓并发送 Telegram 通知。
- *
- * 设计原则：
- *   - 无状态：每次调用独立运行，不依赖内存缓存
- *   - 保守判定：同一次报价同时触及 SL 和 TP → SL 优先
- *   - 优雅降级：获取价格失败 → 记录日志，跳过本轮检查，不抛出异常
- *
- * 未实现盈亏（Unrealized P&L）计算：
- *   通过 getUnrealizedPnl() 辅助函数独立计算，供 dashboard 使用。
+ *   1. 30s 轮询实时价格。
+ *   2. [物理防御] 当 Unrealized PnL >= 1.0R 时，自动触发 Break-Even (移动 SL 进场位)。
+ *   3. [自动驾驶] 触及 TP/SL 自动平仓，无碳基干预。
+ *   4. [静默遥测] 遵循 No News Is Good News，常规平仓不发送通知。
  */
 
 export type ClosedPositionRecord = {
   position: OpenPosition;
   exitPrice: number;
-  status: "closed_tp" | "closed_sl";
+  status: "closed_tp" | "closed_sl" | "closed_manual";
   pnlR: number;
 };
 
 export type MonitorResult = {
   symbol: string;
   currentPrice: number;
-  checked: number;       // 本次检查的 open 仓位数
-  closed: number;        // 本次触发平仓的仓位数
+  checked: number;
+  closed: number;
   closedRecords: ClosedPositionRecord[];
 };
 
-export type UnrealizedPosition = {
-  position: OpenPosition;
-  currentPrice: number;
-  unrealizedPnlR: number;    // 当前未实现盈亏（R 倍数）
-  distanceToTp: number;      // 距离 TP 的百分比（正 = 盈利方向）
-  distanceToSl: number;      // 距离 SL 的百分比（正 = 亏损方向）
-};
-
-// ── 仓位监控主函数 ───────────────────────────────────────────────────────────
-
-/**
- * 监控所有 open 仓位，触及 TP/SL 时自动平仓。
- *
- * @param db             SQLite 数据库实例
- * @param client         交易所客户端（用于获取实时价格）
- * @param symbol         合约品种（如 "BTC/USDT:USDT"）
- * @param notificationConfig 通知配置（平仓时发送通知）
- * @param closedAt       平仓时间戳（测试时注入，生产环境用 Date.now()）
- */
 export async function monitorPositions(
   db: Database.Database,
   client: ExchangeClient,
   symbol: string,
-  notificationConfig?: NotificationConfig,
+  _notificationConfig?: any, // FSD Mode: 忽略通知配置
   closedAt: number = Date.now()
 ): Promise<MonitorResult> {
-  const openPositions = getOpenPositions(db);
+  const openPositions = getOpenPositions(db).filter(p => p.symbol === symbol);
 
   if (openPositions.length === 0) {
     return { symbol, currentPrice: 0, checked: 0, closed: 0, closedRecords: [] };
   }
 
-  // 获取当前价格
   let currentPrice: number;
   try {
     const ticker = await client.fetchTicker(symbol);
     currentPrice = ticker.last;
   } catch (err) {
-    logger.warn({ symbol, err }, "monitorPositions: 获取价格失败，跳过本轮检查");
+    logger.warn({ symbol, err }, "monitorPositions: 获取价格失败");
     return { symbol, currentPrice: 0, checked: openPositions.length, closed: 0, closedRecords: [] };
   }
 
   const closedRecords: ClosedPositionRecord[] = [];
 
   for (const pos of openPositions) {
+    // ── 1. 物理防御检查 (Break-Even) ──────────────────────────────────────
+    const entryMid = (pos.entryLow + pos.entryHigh) / 2;
+    const initialRisk = Math.abs(entryMid - pos.stopLoss);
+    
+    if (initialRisk > 0) {
+      const currentPnlR = pos.direction === "long" 
+        ? (currentPrice - entryMid) / initialRisk
+        : (entryMid - currentPrice) / initialRisk;
+
+      // 如果位移达到 1.0R 且防热盾未上锁
+      if (currentPnlR >= 1.0 && !pos.beActivated) {
+        // 补偿摩擦力：BE 价格略微偏移以覆盖手续费
+        const frictionOffset = initialRisk * 0.05; // 假设 5% 的风险额作为双向摩擦
+        const bePrice = pos.direction === "long" ? entryMid + frictionOffset : entryMid - frictionOffset;
+        
+        activateBreakEven(db, pos.id, bePrice);
+        logger.info({ symbol: pos.symbol, pnlR: currentPnlR.toFixed(2) }, "FSD Physics: Break-Even Activated. 防热盾已上锁。");
+        // 更新本地对象状态以供本次循环后续逻辑使用
+        pos.stopLoss = bePrice;
+        pos.beActivated = true;
+      }
+    }
+
+    // ── 2. 平仓判定 ────────────────────────────────────────────────────────
     const hit = checkHit(pos, currentPrice);
     if (!hit) continue;
 
-    const exitPrice = hit === "closed_tp" ? pos.takeProfit : pos.stopLoss;
+    const exitPrice = currentPrice; // 以当前物理碰撞价平仓，而非预设价（模拟滑点）
 
-    closePosition(
-      db,
-      pos.symbol,
-      pos.direction,
-      pos.timeframe,
-      pos.entryHigh,
-      exitPrice,
-      hit,
-      closedAt
-    );
+    closePosition(db, pos.symbol, pos.direction, pos.timeframe, pos.entryHigh, exitPrice, hit);
 
-    const entryMid = (pos.entryLow + pos.entryHigh) / 2;
-    const risk = Math.abs(entryMid - pos.stopLoss);
-    const pnlR =
-      risk > 0
-        ? pos.direction === "long"
-          ? (exitPrice - entryMid) / risk
-          : (entryMid - exitPrice) / risk
-        : 0;
+    // 物理盈亏重算 (基于平仓时的快照)
+    const risk = Math.abs(entryMid - (pos.beActivated ? entryMid : pos.stopLoss)); // 注意：如果已 BE，初始风险已变
+    // 但为了 R 倍数统计的一致性，通常以初始风险为基准
+    const finalPnlR = pos.direction === "long" ? (exitPrice - entryMid) / initialRisk : (entryMid - exitPrice) / initialRisk;
 
-    const record: ClosedPositionRecord = { position: pos, exitPrice, status: hit, pnlR };
-    closedRecords.push(record);
-
-    logger.info(
-      { id: pos.id, status: hit, exitPrice, pnlR: pnlR.toFixed(2) },
-      "模拟交易：仓位已平仓"
-    );
-
-    // 发送通知
-    if (hasNotificationChannel(notificationConfig)) {
-      const message = formatCloseMessage(record);
-      const result = await sendTextNotification(message, notificationConfig!, fetch, {
-        telegramParseMode: "Markdown",
-      });
-      if (!result.anyDelivered) {
-        logger.warn({ channels: result }, "平仓通知发送失败");
-      }
-    }
+    closedRecords.push({ position: pos, exitPrice, status: hit, pnlR: finalPnlR });
+    logger.info({ symbol: pos.symbol, status: hit, pnlR: finalPnlR.toFixed(2) }, "FSD Execution: Position Closed.");
   }
 
   return {
@@ -135,87 +99,38 @@ export async function monitorPositions(
     currentPrice,
     checked: openPositions.length,
     closed: closedRecords.length,
-    closedRecords,
+    closedRecords
   };
 }
 
-// ── 未实现盈亏计算 ───────────────────────────────────────────────────────────
-
-/**
- * 计算所有 open 仓位的当前未实现盈亏。
- * 供 dashboard / 日志展示使用，不触发平仓。
- */
-export function getUnrealizedPnl(
-  positions: OpenPosition[],
-  currentPrice: number
-): UnrealizedPosition[] {
-  return positions.map((pos) => {
-    const entryMid = (pos.entryLow + pos.entryHigh) / 2;
-    const risk = Math.abs(entryMid - pos.stopLoss);
-
-    const unrealizedPnlR =
-      risk > 0
-        ? pos.direction === "long"
-          ? (currentPrice - entryMid) / risk
-          : (entryMid - currentPrice) / risk
-        : 0;
-
-    const distanceToTp =
-      pos.direction === "long"
-        ? ((pos.takeProfit - currentPrice) / currentPrice) * 100
-        : ((currentPrice - pos.takeProfit) / currentPrice) * 100;
-
-    const distanceToSl =
-      pos.direction === "long"
-        ? ((currentPrice - pos.stopLoss) / currentPrice) * 100
-        : ((pos.stopLoss - currentPrice) / currentPrice) * 100;
-
-    return { position: pos, currentPrice, unrealizedPnlR, distanceToTp, distanceToSl };
-  });
-}
-
-// ── 内部辅助 ──────────────────────────────────────────────────────────────────
-
-/**
- * 判断仓位是否触及 TP 或 SL。
- * 同时触及（跳空行情）→ SL 优先（保守原则）。
- */
-function checkHit(
-  pos: OpenPosition,
-  currentPrice: number
-): "closed_tp" | "closed_sl" | null {
+function checkHit(pos: OpenPosition, price: number): "closed_tp" | "closed_sl" | null {
   if (pos.direction === "long") {
-    const slHit = currentPrice <= pos.stopLoss;
-    const tpHit = currentPrice >= pos.takeProfit;
-    if (slHit) return "closed_sl";
-    if (tpHit) return "closed_tp";
+    if (price <= pos.stopLoss) return "closed_sl";
+    if (price >= pos.takeProfit) return "closed_tp";
   } else {
-    const slHit = currentPrice >= pos.stopLoss;
-    const tpHit = currentPrice <= pos.takeProfit;
-    if (slHit) return "closed_sl";
-    if (tpHit) return "closed_tp";
+    if (price >= pos.stopLoss) return "closed_sl";
+    if (price <= pos.takeProfit) return "closed_tp";
   }
   return null;
 }
 
-function formatCloseMessage(record: ClosedPositionRecord): string {
-  const { position: pos, exitPrice, status, pnlR } = record;
-  const emoji = status === "closed_tp" ? "✅" : "🛑";
-  const label = status === "closed_tp" ? "止盈" : "止损";
-  const pnlSign = pnlR >= 0 ? "+" : "";
+export function getUnrealizedPnl(
+  openPositions: OpenPosition[],
+  currentPrice: number
+): any[] {
+  return openPositions.map((pos) => {
+    const entryMid = (pos.entryLow + pos.entryHigh) / 2;
+    const initialRisk = Math.abs(entryMid - pos.stopLoss);
+    const unrealizedPnlR = initialRisk > 0
+      ? pos.direction === "long" ? (currentPrice - entryMid) / initialRisk : (entryMid - currentPrice) / initialRisk
+      : 0;
 
-  return (
-    `${emoji} *模拟交易 ${label}*\n` +
-    `品种：${pos.symbol}  方向：${pos.direction === "long" ? "做多" : "做空"}\n` +
-    `平仓价：${exitPrice.toLocaleString()}\n` +
-    `盈亏：${pnlSign}${pnlR.toFixed(2)}R\n` +
-    `持仓时长：${formatDuration(pos.openedAt, Date.now())}`
-  );
-}
-
-function formatDuration(openedAt: number, now: number): string {
-  const ms = now - openedAt;
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    return {
+      position: pos,
+      currentPrice,
+      unrealizedPnlR,
+      distanceToTp: (Math.abs(currentPrice - pos.takeProfit) / currentPrice) * 100,
+      distanceToSl: (Math.abs(currentPrice - pos.stopLoss) / currentPrice) * 100,
+    };
+  });
 }

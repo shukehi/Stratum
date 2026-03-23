@@ -38,6 +38,7 @@ export type OpenPosition = {
   capitalVelocityScore: number;
   openedAt: number;   // Unix 毫秒时间戳，通常等于告警发送时间
   status: PositionStatus;
+  beActivated?: boolean; // V3 Physics: 是否已触发 1.0R 盈亏平衡锁
   notionalSize?: number; // 开仓时的名义金额 (美元价值)
   closedAt?: number;  // Unix 毫秒时间戳，仅在仓位已平仓时存在
   closePrice?: number;

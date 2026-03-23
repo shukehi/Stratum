@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 
 /**
- * 仓位数据库初始化 (PHASE_10-B - V2 Physics)
+ * 仓位数据库初始化 (PHASE_10-B - V2 Physics + BE)
  */
 export function initPositionsDb(db: Database.Database): void {
   db.prepare(`
@@ -18,6 +18,7 @@ export function initPositionsDb(db: Database.Database): void {
       capital_velocity_score REAL NOT NULL,
       opened_at        INTEGER NOT NULL,
       status           TEXT    NOT NULL,
+      be_activated     INTEGER NOT NULL DEFAULT 0, -- V3 Physics: 1.0R 盈亏平衡锁
       notional_size    REAL,
       recommended_position_size REAL,
       recommended_base_size     REAL,
