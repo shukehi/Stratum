@@ -75,7 +75,7 @@ if [[ "$database_url" != ":memory:" ]]; then
 fi
 
 echo "Installing dependencies..."
-"${PNPM_CMD[@]}" install --frozen-lockfile --force
+"${PNPM_CMD[@]}" install --frozen-lockfile --force --production=false
 "${PNPM_CMD[@]}" rebuild better-sqlite3
 
 echo "Running verification..."
