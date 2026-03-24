@@ -44,6 +44,8 @@ function makeInput(overrides: Partial<ConsensusInput> = {}): ConsensusInput {
       minStructureScore: 60,
       minimumRiskReward: 1.5,
       maxStopDistanceAtr: 5.0,
+      baseSlippagePct: 0,
+      sessionSlippageMultiplier: 2.5,
     } as any,
     ...overrides,
   };
@@ -76,6 +78,26 @@ describe("evaluateConsensus (V3 Physics Refactor)", () => {
       // 70 * 1.1 (RR奖励) * 1.2 (对齐乘数) = 92.4
       const [c] = evaluateConsensus(input);
       expect(c.capitalVelocityScore).toBe(92.4);
+    });
+
+    it("滑点摩擦：基础滑点使得 CVS 下降 (baseSlippagePct > 0)", () => {
+      const mockConfig = makeInput().config;
+      const input = makeInput({ setups: [makeSetup({ structureScore: 70 })], config: { ...mockConfig, baseSlippagePct: 0.001 } as any });
+      // effective_slip = 0.002, friction = 1.2, numerator = 84
+      // cvs = 84 / 1.2 = 70
+      const [c] = evaluateConsensus(input);
+      expect(c.capitalVelocityScore).toBe(70);
+    });
+
+    it("低流动性时段：SESSION_LOW_LIQUIDITY_DISCOUNT 放大滑点惩罚", () => {
+      const mockConfig = makeInput().config;
+      const input = makeInput({ setups: [makeSetup({ structureScore: 70 })], config: { ...mockConfig, baseSlippagePct: 0.001 } as any });
+      input.ctx.reasonCodes.push("SESSION_LOW_LIQUIDITY_DISCOUNT");
+      // effective_slip = 0.002 * 2.5 = 0.005
+      // friction = 1.5, numerator = 84
+      // cvs = 84 / 1.5 = 56
+      const [c] = evaluateConsensus(input);
+      expect(c.capitalVelocityScore).toBe(56);
     });
   });
 

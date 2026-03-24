@@ -74,6 +74,10 @@ export type StrategyConfig = {
 
   // --- 校准 ---
   readonly calibrationMinSampleSize: number;
+
+  // --- 摩擦力参数 ---
+  readonly baseSlippagePct: number;          // 基础滑点（默认 0.001 = 0.1%）
+  readonly sessionSlippageMultiplier: number; // 低流动性时段滑点倍数（默认 2.5）
 };
 
 export const strategyConfig = {
@@ -141,4 +145,8 @@ export const strategyConfig = {
 
   // --- 校准 ---
   calibrationMinSampleSize: 50,
+
+  // --- 摩擦力参数 ---
+  baseSlippagePct: 0.001,
+  sessionSlippageMultiplier: 2.5,
 } as const satisfies StrategyConfig;

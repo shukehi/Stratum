@@ -35,30 +35,33 @@ function computeCVS(
   regimeAligned: boolean,
   participantAligned: boolean,
   rr: number,
-  ctx: MarketContext
+  ctx: MarketContext,
+  config: StrategyConfig
 ): number {
-  // 基础对齐乘数（修复：regime 现在真正有区分度）
+  // — 推力部分（不变）—
   let multiplier = 1.0;
   if (regimeAligned && participantAligned) multiplier = 1.2;
   else if (!regimeAligned && !participantAligned) multiplier = 0.8;
 
-  let baseScore = setup.structureScore * multiplier;
+  let numerator = setup.structureScore * multiplier;
 
-  // 高波动/事件驱动：即使通过了 context gate，对 CVS 施加惩罚系数
   if (ctx.regime === "high-volatility" || ctx.regime === "event-driven") {
-    baseScore *= 0.9;
+    numerator *= 0.9;
+  }
+  if (rr >= 3.0) numerator *= 1.1;
+  if (setup.confirmationStatus === "pending") numerator *= 0.8;
+
+  // — 摩擦力部分（新增）—
+  let effectiveSlippage = config.baseSlippagePct * 2;
+
+  if (ctx.reasonCodes.includes("SESSION_LOW_LIQUIDITY_DISCOUNT")) {
+    effectiveSlippage *= config.sessionSlippageMultiplier;
   }
 
-  // 盈亏比奖励：RR ≥ 3 是真正的期望边际
-  if (rr >= 3.0) baseScore *= 1.1;
+  const frictionDenominator = 1 + effectiveSlippage * 100;
+  const cvs = numerator / frictionDenominator;
 
-  // 待确认结构：能量尚未验证，降权
-  if (setup.confirmationStatus === "pending") baseScore *= 0.8;
-
-  // 低流动性时段：滑点摩擦上升
-  if (ctx.reasonCodes.includes("SESSION_LOW_LIQUIDITY_DISCOUNT")) baseScore *= 0.9;
-
-  return Math.round(baseScore * 100) / 100;
+  return Math.round(cvs * 100) / 100;
 }
 
 /**
@@ -135,7 +138,7 @@ export function analyzeConsensus(
     }
 
     const pAligned = isParticipantAligned(setup.direction, ctx.participantPressureType);
-    const cvs = computeCVS(setup, regimeAligned, pAligned, rr, ctx);
+    const cvs = computeCVS(setup, regimeAligned, pAligned, rr, ctx, config);
 
     candidates.push({
       symbol,
