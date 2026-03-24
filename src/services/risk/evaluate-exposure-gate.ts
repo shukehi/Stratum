@@ -2,6 +2,7 @@ import type { StrategyConfig } from "../../app/config.js";
 import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { OpenPosition } from "../../domain/position/open-position.js";
+import type { MarketRegime } from "../../domain/regime/market-regime.js";
 
 /**
  * 资本置换协议 (Capital Swapping Protocol - CSP)  (V3 - Physics First)
@@ -21,6 +22,8 @@ export type ExposureGateInput = {
   openPositions: OpenPosition[];
   portfolioOpenRiskPercent: number;
   config: StrategyConfig;
+  currentRegime?: MarketRegime;
+  regimeConfidence?: number;
 };
 
 /**
@@ -29,7 +32,7 @@ export type ExposureGateInput = {
 export function evaluateSwappingGate(
   input: ExposureGateInput
 ): SwappingDecision {
-  const { candidate, openPositions, portfolioOpenRiskPercent, config } = input;
+  const { candidate, openPositions, portfolioOpenRiskPercent, config, currentRegime, regimeConfidence } = input;
 
   // 1. 检查总体账户风险是否还有余量
   const hasGlobalBuffer = (portfolioOpenRiskPercent + config.riskPerTrade) <= config.maxPortfolioOpenRiskPercent;
@@ -50,8 +53,18 @@ export function evaluateSwappingGate(
     .sort((a, b) => a.capitalVelocityScore - b.capitalVelocityScore)[0];
 
   if (weakestPosition) {
-    // 门槛：新信号 CVS 必须比旧信号高出至少 20%
-    const SWAP_THRESHOLD_RATIO = 1.2;
+    // 门槛：新信号 CVS 必须比旧信号高出要求比例
+    const baseThreshold = {
+      "trend":          config.cspSwapThresholdTrend,
+      "range":          config.cspSwapThresholdRange,
+      "high-volatility": config.cspSwapThresholdHighVolatility,
+      "event-driven":   config.cspSwapThresholdEventDriven,
+    }[currentRegime ?? "range"] ?? config.cspSwapThresholdRange;
+  
+    // 置信度低时进一步收紧（每低 10% 置信度，门槛额外 +0.05）
+    const confidenceAdj = (regimeConfidence ?? 70) < 70 ? (70 - (regimeConfidence ?? 70)) / 10 * 0.05 : 0;
+    const SWAP_THRESHOLD_RATIO = baseThreshold + confidenceAdj;
+
     if (candidate.capitalVelocityScore > weakestPosition.capitalVelocityScore * SWAP_THRESHOLD_RATIO) {
       return { 
         action: "allow_swap", 

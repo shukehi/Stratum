@@ -161,7 +161,12 @@ export async function runSignalScan(
   for (const candidate of candidates) {
     const portfolioExposure = getOpenRiskSummary(db);
     const swappingDecision = evaluateSwappingGate({
-      candidate, openPositions, portfolioOpenRiskPercent: portfolioExposure.openRiskPercent, config
+      candidate,
+      openPositions,
+      portfolioOpenRiskPercent: portfolioExposure.openRiskPercent,
+      config,
+      currentRegime: ctx.regime,
+      regimeConfidence: ctx.regimeConfidence
     });
 
     if (swappingDecision.action === "block") {

@@ -78,6 +78,12 @@ export type StrategyConfig = {
   // --- 摩擦力参数 ---
   readonly baseSlippagePct: number;          // 基础滑点（默认 0.001 = 0.1%）
   readonly sessionSlippageMultiplier: number; // 低流动性时段滑点倍数（默认 2.5）
+
+  // --- CSP 资本置换协议 ---
+  readonly cspSwapThresholdTrend: number;         // 趋势市置换门槛（默认 1.1）
+  readonly cspSwapThresholdRange: number;          // 震荡市置换门槛（默认 1.25）
+  readonly cspSwapThresholdHighVolatility: number; // 高波动市置换门槛（默认 1.5）
+  readonly cspSwapThresholdEventDriven: number;    // 事件驱动市（默认 999，禁止置换）
 };
 
 export const strategyConfig = {
@@ -149,4 +155,10 @@ export const strategyConfig = {
   // --- 摩擦力参数 ---
   baseSlippagePct: 0.001,
   sessionSlippageMultiplier: 2.5,
+
+  // --- CSP 资本置换协议 ---
+  cspSwapThresholdTrend: 1.1,
+  cspSwapThresholdRange: 1.25,
+  cspSwapThresholdHighVolatility: 1.5,
+  cspSwapThresholdEventDriven: 999,
 } as const satisfies StrategyConfig;
