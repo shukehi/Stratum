@@ -12,6 +12,9 @@ import type { NotificationConfig } from "./services/alerting/send-notification.j
 import { startDiscordBot } from "./services/discord/discord-bot.js";
 import { getOpenPositions } from "./services/positions/track-position.js";
 import { startTelegramCommandBot } from "./services/telegram/telegram-command-bot.js";
+import { BinanceWsClient } from "./clients/exchange/binance-ws-client.js";
+import { detectOiAlert } from "./services/analysis/detect-oi-crash.js";
+import type { OpenInterestPoint } from "./domain/market/open-interest.js";
 
 /**
  * Stratum 入口  (PHASE_13)
@@ -187,6 +190,33 @@ async function main(): Promise<void> {
     },
     shutdownController.signal
   );
+
+  // ── 调度器 1.5：WebSocket 事件驱动的瞬态行情猎马 (TASK-P3-B) ───────────────
+  const wsClient = new BinanceWsClient(perpSymbol);
+  let oiPointsWindow: OpenInterestPoint[] = [];
+
+  wsClient.subscribeOi(async (payload) => {
+    oiPointsWindow.push({ timestamp: payload.timestamp, openInterest: payload.openInterest });
+    if (oiPointsWindow.length > 50) {
+      oiPointsWindow.shift();
+    }
+    
+    // 当蓄满 50 个 3 秒窗口数据（共 2.5 分钟）即可开始监控 2-Sigma 突变
+    if (oiPointsWindow.length === 50) {
+      const isAlert = detectOiAlert(oiPointsWindow);
+      if (isAlert) {
+        logger.info("WebSocket: 【事件驱动触发】捕获到 2-Sigma OI 崩溃，拉起极速全盘扫描！");
+        // 清理前 25 个点以留取一半空白期，避免下个 3 秒马上又重复报
+        oiPointsWindow = oiPointsWindow.slice(25);
+        try {
+          const result = await runSignalScan(perpSymbol, env.SPOT_SYMBOL, scanDeps);
+          lastScanAt = result.scannedAt;
+        } catch(err) {
+          logger.error({ err }, "WebSocket 事件驱动引发的扫描发生致命异常");
+        }
+      }
+    }
+  }, shutdownController.signal);
 
   // ── 调度器 2：仓位监控（每 30s，模拟交易 TP/SL 检测）──────────────────────
   const positionMonitor = runScheduler(
