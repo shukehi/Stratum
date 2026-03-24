@@ -121,3 +121,20 @@ export function detectOiCrash(
 
   return result;
 }
+
+/**
+ * OI 快速预警检测（2-Sigma 级别，比主门控更敏感）
+ * 用于 5min 快速轮询，不作为主流水线门控
+ */
+export function detectOiAlert(
+  oiPoints: OpenInterestPoint[],
+  lookback = 50,
+  alertSigmaThreshold = 2.0 // 比主门控（3.0）更敏感
+): { shouldAlert: boolean; alertIndex: number } {
+  // 复用现有统计逻辑，只是阈值从 3.0 降至 2.0
+  const crashResult = detectOiCrash(oiPoints, undefined, lookback, alertSigmaThreshold);
+  return {
+    shouldAlert: crashResult.isCrash,
+    alertIndex: crashResult.crashIndex,
+  };
+}

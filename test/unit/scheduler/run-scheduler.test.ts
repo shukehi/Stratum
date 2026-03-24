@@ -40,4 +40,36 @@ describe("run-scheduler (V2 Physics)", () => {
 
     expect(mockScan).toHaveBeenCalled();
   });
+
+  it("OI 监控触发快速扫描 (V2 Physics)", async () => {
+    const mockScan = vi.fn().mockResolvedValue(mockResult);
+    const mockMonitor = vi.fn().mockResolvedValue({ closed: 0 });
+    const mockOiWatch = vi.fn().mockResolvedValue({ shouldTriggerScan: true });
+    const controller = new AbortController();
+
+    setTimeout(() => controller.abort(), 100);
+
+    await runScheduler(
+      {
+        scanSymbols: ["BTCUSDT"],
+        onScan: mockScan,
+        onMonitor: mockMonitor,
+        onSession: vi.fn(),
+        onHeartbeat: vi.fn(),
+        onOiWatch: mockOiWatch,
+      },
+      controller.signal,
+      { 
+        scanIntervalMs: 500, // 不自动触发定时 scan
+        monitorIntervalMs: 500, 
+        sessionIntervalMs: 500, 
+        heartbeatIntervalMs: 500,
+        oiWatchIntervalMs: 20 // 确保首先触发 oi watch
+      }
+    );
+
+    // Initial scan is 1 call, then OI Watch triggers at 20ms, increasing the count.
+    expect(mockScan).toHaveBeenCalled();
+    expect(mockOiWatch).toHaveBeenCalled();
+  });
 });

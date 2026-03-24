@@ -33,6 +33,8 @@ export type SchedulerV2Config = {
   onMonitor: () => Promise<unknown>;
   onSession: () => Promise<unknown>;
   onHeartbeat: () => Promise<unknown>;
+  // 新增：快速 OI 预警检查
+  onOiWatch?: (symbols: string[]) => Promise<{ shouldTriggerScan: boolean }>;
 };
 
 export type SchedulerV2Intervals = {
@@ -40,6 +42,8 @@ export type SchedulerV2Intervals = {
   monitorIntervalMs?: number;
   sessionIntervalMs?: number;
   heartbeatIntervalMs?: number;
+  // 新增
+  oiWatchIntervalMs?: number; // 默认 5min
 };
 
 // ── 辅助函数（纯函数，便于测试）─────────────────────────────────────────────
@@ -149,6 +153,7 @@ async function runSchedulerV2(
     monitorIntervalMs = 60_000,
     sessionIntervalMs = 5 * 60 * 1000,
     heartbeatIntervalMs = 30_000,
+    oiWatchIntervalMs = 5 * 60 * 1000, // ← 新增，默认 5min
   } = intervals;
 
   logger.info(
@@ -188,6 +193,24 @@ async function runSchedulerV2(
     }, heartbeatIntervalMs)
   );
 
+  if (config.onOiWatch) {
+    timers.push(
+      setInterval(async () => {
+        if (!signal.aborted && config.onOiWatch) {
+          const result = await safeCallWithResult(
+            "oi-watch",
+            () => config.onOiWatch!(config.scanSymbols)
+          );
+          // OI 预警触发 → 立即执行完整扫描，不等待下一个 scan 时钟
+          if (result?.shouldTriggerScan && !signal.aborted) {
+            logger.info("Scheduler: OI 预警触发，执行即时扫描");
+            await safeCall("scan-triggered-by-oi", () => config.onScan(config.scanSymbols));
+          }
+        }
+      }, oiWatchIntervalMs)
+    );
+  }
+
   await new Promise<void>((resolve) => {
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
@@ -209,6 +232,21 @@ async function safeCall(
     logger.info(`Scheduler: ${name} complete`);
   } catch (err) {
     logger.error({ err }, `Scheduler: ${name} failed, will retry at next interval`);
+  }
+}
+
+async function safeCallWithResult<T>(
+  name: string,
+  fn: () => Promise<T>
+): Promise<T | undefined> {
+  logger.info(`Scheduler: executing ${name}`);
+  try {
+    const result = await fn();
+    logger.info(`Scheduler: ${name} complete`);
+    return result;
+  } catch (err) {
+    logger.error({ err }, `Scheduler: ${name} failed`);
+    return undefined;
   }
 }
 

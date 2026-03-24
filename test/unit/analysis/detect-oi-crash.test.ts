@@ -1,5 +1,5 @@
 import { expect, test, describe } from "vitest";
-import { detectOiCrash } from "../../../src/services/analysis/detect-oi-crash.js";
+import { detectOiCrash, detectOiAlert } from "../../../src/services/analysis/detect-oi-crash.js";
 import type { OpenInterestPoint } from "../../../src/domain/market/open-interest.js";
 
 describe("detectOiCrash (Directional Mechanics)", () => {
@@ -67,5 +67,29 @@ describe("detectOiCrash (Directional Mechanics)", () => {
     expect(result.isCrash).toBe(true);
     expect(result.mechanismType).toBe("unknown");
     expect(result.priceChangePct).toBe(0);
+  });
+});
+
+describe("detectOiAlert (Fast Watch Probe)", () => {
+  const generateOiPoints = (count: number, startOi: number, dropPct: number): OpenInterestPoint[] => {
+    const points: OpenInterestPoint[] = [];
+    let currentOi = startOi;
+    for (let i = 0; i < count; i++) {
+        currentOi *= (1 + (Math.random() - 0.5) * 0.001); // minor noise
+        points.push({
+          timestamp: Date.now() + i * 1000,
+          openInterest: currentOi,
+        });
+    }
+    // Simulate drop
+    points[points.length - 1].openInterest *= (1 - dropPct);
+    return points;
+  };
+
+  test("should alert on strong drop", () => {
+    const oiPoints = generateOiPoints(20, 1000, 0.5); // 50% drop
+    const result = detectOiAlert(oiPoints, 10);
+    expect(result.shouldAlert).toBe(true);
+    expect(result.alertIndex).toBeLessThan(-2.0);
   });
 });
