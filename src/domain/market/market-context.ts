@@ -15,7 +15,7 @@ export type MarketContext = {
   regimeReasons: string[];
   marketDriverType?: MarketDriverType;
   marketDriverConfidence?: number;
-  participantBias: "long-crowded" | "short-crowded" | "balanced";
+  participantBias: "long-crowded" | "short-crowded" | "balanced" | "bullish" | "bearish";
   participantPressureType: "squeeze-risk" | "flush-risk" | "none";
   participantConfidence: number;
   participantRationale: string;

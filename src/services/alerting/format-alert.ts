@@ -71,8 +71,10 @@ export function formatAlert(
 function formatContext(ctx: MarketContext): string {
   const regimeDesc = ctx.regime === "trend" ? "趋势市" : "震荡市";
   const pBiasDesc =
-    ctx.participantBias === "long-crowded" ? "多头拥挤" :
-    ctx.participantBias === "short-crowded" ? "空头拥挤" : "平衡";
+    ctx.participantBias === "long-crowded"  ? "多头拥挤" :
+    ctx.participantBias === "short-crowded" ? "空头拥挤" :
+    ctx.participantBias === "bullish"       ? "偏多" :
+    ctx.participantBias === "bearish"       ? "偏空" : "平衡";
 
   return `${regimeDesc} | 情绪${pBiasDesc}`;
 }

@@ -54,7 +54,7 @@ export function buildPositionSizingSummary(
   } = input;
 
   const entryMid = (candidate.entryLow + candidate.entryHigh) / 2;
-  const accountRiskPercent = config.riskPerTrade;
+  const accountRiskPercent = config.riskPerTrade * 100; // 展示用百分比，e.g. 0.01 → 1
   const projectedSameDirectionRiskPercent =
     sameDirectionOpenRiskPercent + accountRiskPercent;
   const projectedPortfolioRiskPercent =
@@ -62,7 +62,7 @@ export function buildPositionSizingSummary(
 
   const riskAmount =
     config.accountSizeUsd > 0
-      ? config.accountSizeUsd * accountRiskPercent
+      ? config.accountSizeUsd * config.riskPerTrade // 使用原始小数计算金额
       : undefined;
   const recommendedPositionSize = computePositionSize(
     config.accountSizeUsd,

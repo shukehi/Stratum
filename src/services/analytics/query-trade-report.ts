@@ -164,20 +164,26 @@ export function getWinRateByStructureType(db: Database.Database): WinRateRow[] {
 }
 
 export function getExecutionFunnelStats(db: Database.Database) {
-  const row = db.prepare(`
-    SELECT 
-      (SELECT COUNT(*) FROM positions WHERE status = 'open') as open_pos,
-      (SELECT COUNT(*) FROM positions WHERE status != 'open') as closed_pos
-  `).get() as any;
+  const total = (db.prepare(`SELECT COUNT(*) as cnt FROM candidate_snapshots`).get() as any).cnt ?? 0;
+
+  const rows = db.prepare(`
+    SELECT execution_outcome as outcome, COUNT(*) as cnt
+    FROM candidate_snapshots
+    GROUP BY execution_outcome
+  `).all() as { outcome: string; cnt: number }[];
+
+  const byOutcome: Record<string, number> = {};
+  for (const r of rows) byOutcome[r.outcome] = r.cnt;
+
   return {
-    totalSnapshots: 0,
-    skippedExecutionGate: 0,
-    skippedDuplicate: 0,
-    failed: 0,
-    sent: 0,
-    opened: (row.open_pos || 0) + (row.closed_pos || 0),
-    openPositions: row.open_pos || 0,
-    closedPositions: row.closed_pos || 0,
+    totalSnapshots: total,
+    skippedExecutionGate: byOutcome["skipped_execution_gate"] ?? 0,
+    skippedDuplicate: byOutcome["skipped_duplicate"] ?? 0,
+    failed: byOutcome["failed"] ?? 0,
+    sent: byOutcome["sent"] ?? 0,
+    opened: byOutcome["opened"] ?? 0,
+    openPositions: 0,
+    closedPositions: 0,
   };
 }
 
