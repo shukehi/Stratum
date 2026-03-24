@@ -59,15 +59,15 @@ export function analyzeStructuralSetups(
   config: StrategyConfig,
   oiPoints: OpenInterestPoint[] = [],
   precomputedEqualLevels?: EqualLevel[],
-): { setups: StructuralSetup[]; skipReasonCode?: ReasonCode } {
+): { setups: StructuralSetup[]; skipReasonCode?: ReasonCode; equalLevels: EqualLevel[] } {
   // ── 1. 真空期：去杠杆真空期内跳过所有结构信号 ───────────────────────────
   if (ctx.reasonCodes.includes("DELEVERAGING_VACUUM")) {
-    return { setups: [], skipReasonCode: "DELEVERAGING_VACUUM" };
+    return { setups: [], skipReasonCode: "DELEVERAGING_VACUUM", equalLevels: [] };
   }
 
   // ── 2. 低状态置信度：regimeConfidence 不足时结构信号不可信 ───────────────
   if (ctx.regimeConfidence < config.minRegimeConfidence) {
-    return { setups: [], skipReasonCode: "REGIME_LOW_CONFIDENCE" };
+    return { setups: [], skipReasonCode: "REGIME_LOW_CONFIDENCE", equalLevels: [] };
   }
 
   // ── 3. 检测 FVG（仅 4h，与 sweep 完全独立） ────────────────────────────
@@ -79,7 +79,7 @@ export function analyzeStructuralSetups(
   // ── 5. 合并并应用复合结构加分 ─────────────────────────────────────────────
   const combined = [...fvgSetups, ...sweepSetups];
   if (combined.length === 0) {
-    return { setups: [], skipReasonCode: "STRUCTURE_NO_SETUP" };
+    return { setups: [], skipReasonCode: "STRUCTURE_NO_SETUP", equalLevels: [] };
   }
   const withConfluence = applyConfluence(combined, config);
 
@@ -122,14 +122,14 @@ export function analyzeStructuralSetups(
     .filter(s => s.structureScore >= config.minStructureScore);
 
   if (surviving.length > 0) {
-    return { setups: surviving };
+    return { setups: surviving, equalLevels: allEqualLevels };
   }
 
   if (withConfirmation.some((setup) => setup.confirmationStatus === "invalidated")) {
-    return { setups: [], skipReasonCode: "STRUCTURE_CONFIRMATION_INVALIDATED" };
+    return { setups: [], skipReasonCode: "STRUCTURE_CONFIRMATION_INVALIDATED", equalLevels: allEqualLevels };
   }
 
-  return { setups: [], skipReasonCode: "STRUCTURE_SCORE_TOO_LOW" };
+  return { setups: [], skipReasonCode: "STRUCTURE_SCORE_TOO_LOW", equalLevels: allEqualLevels };
 }
 
 // ── 等高等低加成（导出供单元测试使用）─────────────────────────────────────────

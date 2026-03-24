@@ -140,7 +140,8 @@ export async function runSignalScan(
   // 4. 共识与 CVS 计算
   const consensusAnalysis = analyzeConsensus({
     symbol, setups: structuralAnalysis.setups, ctx, config, baselineAtr,
-    dailyBias: dailyBiasResult?.bias, orderFlowBias: orderFlowResult.bias
+    dailyBias: dailyBiasResult?.bias, orderFlowBias: orderFlowResult.bias,
+    equalLevels: structuralAnalysis.equalLevels
   });
 
   const candidates = consensusAnalysis.candidates;

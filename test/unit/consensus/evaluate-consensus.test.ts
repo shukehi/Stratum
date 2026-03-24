@@ -127,3 +127,52 @@ describe("applySignalDecay (Half-life decay model)", () => {
     expect(applySignalDecay(100, -3600_000)).toBe(100);
   });
 });
+
+describe("TP Reachability Assessment", () => {
+  const baseOverrides = { structureScore: 100, entryLow: 90, entryHigh: 100, stopLossHint: 80, takeProfitHint: 150, direction: "long" as const };
+
+  it("无阻档时 CVS 保持 100%", () => {
+    const input = makeInput({ setups: [makeSetup(baseOverrides)] });
+    const [c1] = evaluateConsensus(input);
+
+    const inputWithObstacles = makeInput({
+      setups: [makeSetup(baseOverrides)],
+    });
+    inputWithObstacles.equalLevels = [{ price: 160, type: "high", touchCount: 2, toleranceAbsolute: 5, firstTimestamp: 0, lastTimestamp: 0 }]; // 阻力在 TP 之上
+    const [c2] = evaluateConsensus(inputWithObstacles);
+
+    expect(c2.capitalVelocityScore).toBe(c1.capitalVelocityScore);
+  });
+
+  it("1 处阻碍时 CVS 降权至 85%", () => {
+    const input = makeInput({ setups: [makeSetup(baseOverrides)] });
+    const [c1] = evaluateConsensus(input);
+
+    const inputWithObstacles = makeInput({
+      setups: [makeSetup(baseOverrides)],
+    });
+    inputWithObstacles.equalLevels = [{ price: 120, type: "high", touchCount: 2, toleranceAbsolute: 5, firstTimestamp: 0, lastTimestamp: 0 }]; // 阻力在路径上
+    const [c2] = evaluateConsensus(inputWithObstacles);
+
+    expect(c2.capitalVelocityScore).toBeCloseTo(c1.capitalVelocityScore * 0.85, 0);
+    expect(c2.contextReason).toContain("TP路径受阻(x0.85)");
+  });
+
+  it("多处阻碍时 CVS 降权至 70%", () => {
+    const input = makeInput({ setups: [makeSetup(baseOverrides)] });
+    const [c1] = evaluateConsensus(input);
+
+    const inputWithObstacles = makeInput({
+      setups: [makeSetup(baseOverrides)],
+    });
+    inputWithObstacles.equalLevels = [
+        { price: 120, type: "high", touchCount: 2, toleranceAbsolute: 5, firstTimestamp: 0, lastTimestamp: 0 },
+        { price: 140, type: "high", touchCount: 2, toleranceAbsolute: 5, firstTimestamp: 0, lastTimestamp: 0 }
+    ];
+    const [c2] = evaluateConsensus(inputWithObstacles);
+
+    expect(c2.capitalVelocityScore).toBeCloseTo(c1.capitalVelocityScore * 0.70, 0);
+    expect(c2.contextReason).toContain("TP路径受阻(x0.7)");
+  });
+});
+

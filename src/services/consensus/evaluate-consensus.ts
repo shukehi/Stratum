@@ -6,6 +6,7 @@ import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { StrategyConfig } from "../../app/config.js";
 import type { DailyBias } from "../../domain/market/daily-bias.js";
 import type { OrderFlowBias } from "../../domain/market/order-flow.js";
+import type { EqualLevel } from "../../domain/market/equal-level.js";
 import { computeRiskReward } from "../risk/compute-risk-reward.js";
 
 /**
@@ -19,7 +20,39 @@ export type ConsensusInput = {
   baselineAtr?: number;
   dailyBias?: DailyBias;
   orderFlowBias?: OrderFlowBias;
+  equalLevels?: EqualLevel[]; // ← 新增（可选，不传则 TP 可达性跳过）
 };
+
+/**
+ * TP 可达性评估
+ * 检查从入场区到 TP 路径上是否存在等高等低阻力区
+ * @returns multiplier  1.0=畅通 | 0.85=1处阻力 | 0.7=多处阻力
+ */
+function assessTpReachability(
+  setup: StructuralSetup,
+  equalLevels: EqualLevel[]
+): number {
+  if (equalLevels.length === 0) return 1.0;
+
+  // 确定 TP 路径区间（从入场区外侧边界 → TP）
+  const [pathLow, pathHigh] = setup.direction === "long"
+    ? [setup.entryHigh, setup.takeProfitHint]
+    : [setup.takeProfitHint, setup.entryLow];
+
+  const obstacles = equalLevels.filter(level => {
+    const inPath = level.price >= pathLow && level.price <= pathHigh;
+    const notEntry = level.price < setup.entryLow || level.price > setup.entryHigh;
+    // 做多：路径上的等高为阻力；做空：路径上的等低为阻力
+    const isResistance = setup.direction === "long"
+      ? level.type === "high"
+      : level.type === "low";
+    return inPath && notEntry && isResistance;
+  });
+
+  if (obstacles.length === 0) return 1.0;
+  if (obstacles.length === 1) return 0.85; // 轻度阻挡降权
+  return 0.7; // 重度阻挡大幅降权
+}
 
 /**
  * 信号周转期望 (CVS) 计算器 (V2 Physics — Fixed)
@@ -138,7 +171,12 @@ export function analyzeConsensus(
     }
 
     const pAligned = isParticipantAligned(setup.direction, ctx.participantPressureType);
+    
+    // FSD / TASK-P2-C 修正：评价 TP 的物理流通性
+    const reachability = input.equalLevels ? assessTpReachability(setup, input.equalLevels) : 1.0;
+    
     const cvs = computeCVS(setup, regimeAligned, pAligned, rr, ctx, config);
+    const finalCvs = Math.round(cvs * reachability * 100) / 100;
 
     candidates.push({
       symbol,
@@ -152,8 +190,8 @@ export function analyzeConsensus(
       regimeAligned,
       participantAligned: pAligned,
       structureReason: setup.structureReason,
-      contextReason: ctx.summary,
-      capitalVelocityScore: cvs,
+      contextReason: ctx.summary + (reachability < 1.0 ? ` | TP路径受阻(x${reachability})` : ""),
+      capitalVelocityScore: finalCvs,
       reasonCodes: [...setup.reasonCodes],
     });
   }
