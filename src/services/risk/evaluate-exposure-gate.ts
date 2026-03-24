@@ -3,6 +3,7 @@ import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { OpenPosition } from "../../domain/position/open-position.js";
 import type { MarketRegime } from "../../domain/regime/market-regime.js";
+import { applySignalDecay } from "../consensus/evaluate-consensus.js";
 
 /**
  * 资本置换协议 (Capital Swapping Protocol - CSP)  (V3 - Physics First)
@@ -65,11 +66,14 @@ export function evaluateSwappingGate(
     const confidenceAdj = (regimeConfidence ?? 70) < 70 ? (70 - (regimeConfidence ?? 70)) / 10 * 0.05 : 0;
     const SWAP_THRESHOLD_RATIO = baseThreshold + confidenceAdj;
 
-    if (candidate.capitalVelocityScore > weakestPosition.capitalVelocityScore * SWAP_THRESHOLD_RATIO) {
+    const positionAge = Date.now() - weakestPosition.openedAt;
+    const decayedPositionCvs = applySignalDecay(weakestPosition.capitalVelocityScore, positionAge);
+
+    if (candidate.capitalVelocityScore > decayedPositionCvs * SWAP_THRESHOLD_RATIO) {
       return { 
         action: "allow_swap", 
         targetPositionId: weakestPosition.id,
-        reason: `资本置换：新信号 CVS(${candidate.capitalVelocityScore}) 显著优于旧仓位 CVS(${weakestPosition.capitalVelocityScore})`
+        reason: `资本置换：新信号 CVS(${candidate.capitalVelocityScore}) 显著优于旧仓位衰减后 CVS(${decayedPositionCvs}) [原 CVS: ${weakestPosition.capitalVelocityScore}]`
       };
     }
   }

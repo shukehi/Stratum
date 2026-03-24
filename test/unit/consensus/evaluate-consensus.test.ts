@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evaluateConsensus } from "../../../src/services/consensus/evaluate-consensus.js";
+import { evaluateConsensus, applySignalDecay } from "../../../src/services/consensus/evaluate-consensus.js";
 import type { ConsensusInput } from "../../../src/services/consensus/evaluate-consensus.js";
 import type { StructuralSetup } from "../../../src/domain/signal/structural-setup.js";
 
@@ -107,5 +107,23 @@ describe("evaluateConsensus (V3 Physics Refactor)", () => {
     expect(results).toHaveLength(1);
     expect(results[0].symbol).toBe("BTCUSDT");
     expect(results[0].capitalVelocityScore).toBeGreaterThan(0);
+  });
+});
+
+describe("applySignalDecay (Half-life decay model)", () => {
+  it("0 hours -> 100%", () => {
+    expect(applySignalDecay(100, 0)).toBe(100);
+  });
+
+  it("2 hours (1 half-life) -> 50%", () => {
+    expect(applySignalDecay(100, 2 * 3600_000)).toBe(50);
+  });
+
+  it("6 hours (3 half-lives) -> hits the 20% floor barrier", () => {
+    expect(applySignalDecay(100, 6 * 3600_000)).toBe(20); // 100 * 0.125 = 12.5, clamps to floor 20
+  });
+
+  it("Negative age prevents decaying -> 100%", () => {
+    expect(applySignalDecay(100, -3600_000)).toBe(100);
   });
 });

@@ -15,12 +15,13 @@ function buildMockCandidate(symbol: string, direction: "long" | "short", cvs: nu
   };
 }
 
-function buildMockPosition(id: string, symbol: string, direction: "long" | "short", cvs: number): any {
+function buildMockPosition(id: string, symbol: string, direction: "long" | "short", cvs: number, ageMs: number = 0): any {
   return {
     id,
     symbol,
     direction,
     capitalVelocityScore: cvs,
+    openedAt: Date.now() - ageMs
   };
 }
 
@@ -152,5 +153,25 @@ describe("evaluateSwappingGate (Dynamic Regime Thresholds)", () => {
     });
 
     expect(d2.action).toBe("allow_swap");
+  });
+
+  test("Signal decay makes older positions easier to swap", () => {
+    // position threshold is 1.25 (range regime)
+    // original CVS 100 * 1.25 = 125.
+    // If it's 2h old, CVS decays to 50. 50 * 1.25 = 62.5
+    const candidate = buildMockCandidate("BTCUSDT", "long", 70); // 70 < 125, but 70 > 62.5
+    
+    const oldPosition = buildMockPosition("pos1", "ETHUSDT", "long", 100, 2 * 3600000); // 2 hours old
+
+    const decision = evaluateSwappingGate({
+      candidate,
+      openPositions: [oldPosition],
+      portfolioOpenRiskPercent: 0.04,
+      config: mockConfig,
+      currentRegime: "range",
+      regimeConfidence: 80,
+    });
+
+    expect(decision.action).toBe("allow_swap");
   });
 });

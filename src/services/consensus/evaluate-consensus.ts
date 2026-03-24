@@ -163,3 +163,27 @@ export function analyzeConsensus(
     skipReasonCode: candidates.length === 0 ? (lastRejectReason || "STRUCTURE_NO_SETUP") : undefined
   };
 }
+
+/**
+ * 信号半衰期衰减
+ *
+ * 使用指数衰减模型：CVS(t) = CVS(0) × 0.5^(t / halfLife)
+ * 默认 halfLife = 2h（与 Stratum 的 4h 主周期匹配）
+ *
+ * @param cvs         原始 CVS 分数
+ * @param signalAgeMs 信号年龄（毫秒）
+ * @param halfLifeMs  半衰期（默认 2h = 7_200_000ms）
+ * @returns           衰减后的 CVS（最低不低于原始 CVS 的 20%）
+ */
+export function applySignalDecay(
+  cvs: number,
+  signalAgeMs: number,
+  halfLifeMs = 2 * 3_600_000
+): number {
+  if (signalAgeMs <= 0) return cvs;
+  const decayFactor = Math.pow(0.5, signalAgeMs / halfLifeMs);
+  const decayed = cvs * decayFactor;
+  // 下限保护：最多衰减到原始 CVS 的 20%（避免信号变为 0）
+  const floor = cvs * 0.2;
+  return Math.max(Math.round(decayed * 100) / 100, Math.round(floor * 100) / 100);
+}
