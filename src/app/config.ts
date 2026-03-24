@@ -85,6 +85,7 @@ export type StrategyConfig = {
   readonly cspSwapThresholdRange: number;          // 震荡市置换门槛（默认 1.25）
   readonly cspSwapThresholdHighVolatility: number; // 高波动市置换门槛（默认 1.5）
   readonly cspSwapThresholdEventDriven: number;    // 事件驱动市（默认 999，禁止置换）
+  readonly maxDirectionImbalance: number;          // 允许的最大同向/反向仓位数量差（默认 3）
 };
 
 export const strategyConfig = {
@@ -163,4 +164,5 @@ export const strategyConfig = {
   cspSwapThresholdRange: 1.25,
   cspSwapThresholdHighVolatility: 1.5,
   cspSwapThresholdEventDriven: 999,
+  maxDirectionImbalance: 3,
 } as const satisfies StrategyConfig;

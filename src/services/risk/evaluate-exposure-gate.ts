@@ -35,6 +35,22 @@ export function evaluateSwappingGate(
 ): SwappingDecision {
   const { candidate, openPositions, portfolioOpenRiskPercent, config, currentRegime, regimeConfidence } = input;
 
+  // ── TASK-P3-A: 组合方向倾斜度保护 ──────────────────────────────────────────
+  const longCount = openPositions.filter(p => p.direction === "long").length;
+  const shortCount = openPositions.filter(p => p.direction === "short").length;
+  const directionImbalance = Math.abs(longCount - shortCount);
+  const isExtremeSingleSided =
+    directionImbalance >= config.maxDirectionImbalance &&
+    candidate.direction === (longCount > shortCount ? "long" : "short");
+
+  if (isExtremeSingleSided) {
+    return {
+      action: "block",
+      reasonCode: "PORTFOLIO_RISK_LIMIT",
+      reason: `组合倾斜度超限 (多空数量差 ${directionImbalance} >= 阈值 ${config.maxDirectionImbalance})，拦截加剧偏载的同向信号`
+    };
+  }
+
   // 1. 检查总体账户风险是否还有余量
   const hasGlobalBuffer = (portfolioOpenRiskPercent + config.riskPerTrade) <= config.maxPortfolioOpenRiskPercent;
   

@@ -174,4 +174,53 @@ describe("evaluateSwappingGate (Dynamic Regime Thresholds)", () => {
 
     expect(decision.action).toBe("allow_swap");
   });
+
+  test("Direction imbalance protection blocks trade worsening tilt", () => {
+    const candidate = buildMockCandidate("BTCUSDT", "long", 500); // 非常高的 CVS，但会加剧倾斜
+    
+    // 当前有 3 个 long，0 个 short -> 倾斜度 = 3
+    const positions = [
+      buildMockPosition("pos1", "ETHUSDT", "long", 100),
+      buildMockPosition("pos2", "SOLUSDT", "long", 100),
+      buildMockPosition("pos3", "ADAUSDT", "long", 100),
+    ];
+
+    const decision = evaluateSwappingGate({
+      candidate,
+      openPositions: positions,
+      portfolioOpenRiskPercent: 0.03, // 充足的 global buffer
+      config: { ...mockConfig, maxDirectionImbalance: 3, maxCorrelatedSignalsPerDirection: 10 },
+      currentRegime: "trend",
+      regimeConfidence: 80,
+    });
+
+    expect(decision.action).toBe("block");
+    if (decision.action === "block") {
+      expect(decision.reasonCode).toBe("PORTFOLIO_RISK_LIMIT");
+      expect(decision.reason).toContain("组合倾斜度超限");
+    }
+  });
+
+  test("Direction imbalance protection allows trade balancing tilt", () => {
+    const candidate = buildMockCandidate("BTCUSDT", "short", 500); // short 会缓解倾斜
+    
+    // 当前有 3 个 long，0 个 short -> 倾斜度 = 3
+    const positions = [
+      buildMockPosition("pos1", "ETHUSDT", "long", 100),
+      buildMockPosition("pos2", "SOLUSDT", "long", 100),
+      buildMockPosition("pos3", "ADAUSDT", "long", 100),
+    ];
+
+    const decision = evaluateSwappingGate({
+      candidate,
+      openPositions: positions,
+      portfolioOpenRiskPercent: 0.03,
+      config: { ...mockConfig, maxDirectionImbalance: 3, maxCorrelatedSignalsPerDirection: 10 },
+      currentRegime: "trend",
+      regimeConfidence: 80,
+    });
+
+    // 允许入场，因为短期做空是反向操作
+    expect(decision.action).toBe("allow_direct");
+  });
 });
