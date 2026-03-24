@@ -13,7 +13,6 @@ describe("detectOiCrash (Directional Mechanics)", () => {
       else currentOi *= (1 + (Math.random() - 0.5) * 0.001); // minor noise
 
       points.push({
-        symbol: "BTCUSDT",
         timestamp: Date.now() + i * 1000,
         openInterest: currentOi,
       });

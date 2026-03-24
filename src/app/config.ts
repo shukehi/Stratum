@@ -40,6 +40,7 @@ export type StrategyConfig = {
   readonly confluenceBonus: number;
   readonly confirmationShadowRatio: number;
   readonly confirmationCandles: number;
+  readonly requireCvdAlignmentForSweep: boolean; // 是否要求 CVD 方向对齐（默认 false，降权但不屏蔽）
 
   // --- 交易时段 ---
   readonly enableSessionAdjustment: boolean;
@@ -117,6 +118,7 @@ export const strategyConfig = {
   confluenceBonus: 10,
   confirmationShadowRatio: 0.5,
   confirmationCandles: 2,
+  requireCvdAlignmentForSweep: false,
 
   // --- 交易时段 ---
   enableSessionAdjustment: true,

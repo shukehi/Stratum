@@ -3,6 +3,7 @@ import {
   approxDelta,
   computeCVD,
   detectOrderFlowBias,
+  computeCvdAcceleration,
 } from "../../../src/services/analysis/compute-cvd.js";
 import type { Candle } from "../../../src/domain/market/candle.js";
 
@@ -229,5 +230,39 @@ describe("detectOrderFlowBias", () => {
     const cs = Array.from({ length: 20 }, (_, i) => candle(i, 100, 110, 90, 100, 1000));
     const r = detectOrderFlowBias(cs);
     expect(r.reason.length).toBeGreaterThan(0);
+  });
+});
+
+// ── computeCvdAcceleration ───────────────────────────────────────────────────
+
+describe("computeCvdAcceleration", () => {
+  it("数量不足 6 根时返回 neutral 和 accelerationScore=50", () => {
+    const cs = Array.from({ length: 5 }, (_, i) => candle(i, 100, 110, 90, 105, 1000));
+    const result = computeCvdAcceleration(cs, 12);
+    expect(result.direction).toBe("neutral");
+    expect(result.accelerationScore).toBe(50);
+    expect(result.isAccelerating).toBe(false);
+  });
+
+  it("后 1/3 买能暴增（bullish acceleration）", () => {
+    const cs = [
+      ...Array.from({ length: 8 }, (_, i) => candle(i, 100, 110, 90, 100, 1000)), // 前 2/3 十字星
+      ...Array.from({ length: 4 }, (_, i) => candle(i+8, 100, 110, 90, 108, 2000)), // 后 1/3 强买
+    ];
+    const result = computeCvdAcceleration(cs, 12);
+    expect(result.direction).toBe("bullish");
+    expect(result.isAccelerating).toBe(true);
+    expect(result.accelerationScore).toBeGreaterThan(50);
+  });
+
+  it("后 1/3 卖能暴增（bearish acceleration）", () => {
+    const cs = [
+      ...Array.from({ length: 8 }, (_, i) => candle(i, 100, 110, 90, 100, 1000)), // 前 2/3 十字星
+      ...Array.from({ length: 4 }, (_, i) => candle(i+8, 100, 110, 90, 92, 2000)), // 后 1/3 强卖
+    ];
+    const result = computeCvdAcceleration(cs, 12);
+    expect(result.direction).toBe("bearish");
+    expect(result.isAccelerating).toBe(true);
+    expect(result.accelerationScore).toBeGreaterThan(50);
   });
 });

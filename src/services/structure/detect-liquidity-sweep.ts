@@ -4,6 +4,7 @@ import type { StructuralSetup } from "../../domain/signal/structural-setup.js";
 import type { StrategyConfig } from "../../app/config.js";
 import { clamp } from "../../utils/math.js";
 import { detectOiCrash } from "../analysis/detect-oi-crash.js";
+import { computeCvdAcceleration } from "../analysis/compute-cvd.js";
 
 /**
  * Swing 高点/低点类型
@@ -93,6 +94,8 @@ export function detectLiquiditySweep(
     return [];
   }
 
+  const cvdAcc = computeCvdAcceleration(candles, 12);
+
   const directionPenalty = oiResult.mechanismType === "mixed_deleveraging" ? -10 : 0;
 
   const results: StructuralSetup[] = [];
@@ -131,8 +134,13 @@ export function detectLiquiditySweep(
       const mechanismBonus = oiResult.mechanismType === "long_liquidation" ? 5
                            : oiResult.mechanismType === "short_squeeze"    ? -15
                            : 0;
+      
+      const cvdBonus = cvdAcc.direction === "bullish" ? 5
+                     : cvdAcc.direction === "bearish" ? -10 : 0;
+      
       const depthScore = scoreSweepDepth(sweepRatio);
-      const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
+      const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty + cvdBonus), 0, 100);
+      const cvdReason = `CVD加速(${cvdAcc.direction}, slope=${cvdAcc.cvdSlope.toFixed(3)})`;
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
@@ -144,7 +152,7 @@ export function detectLiquiditySweep(
         structureScore,
         structureReason:
           `看涨流动性扫荡(物理确认): 刺破 ${matchedLow.price.toFixed(0)} | ` +
-          `${oiResult.reason} | 能量指数: ${oiResult.crashIndex.toFixed(1)}R`,
+          `${oiResult.reason} | 能量指数: ${oiResult.crashIndex.toFixed(1)}R | ${cvdReason}`,
         invalidationReason: `1h收盘跌破 ${stopLossHint.toFixed(0)}`,
         confluenceFactors: ["liquidity-sweep"],
         confirmationStatus: "pending",
@@ -169,8 +177,13 @@ export function detectLiquiditySweep(
       const mechanismBonus = oiResult.mechanismType === "short_squeeze"    ? 5
                            : oiResult.mechanismType === "long_liquidation" ? -15
                            : 0;
+                           
+      const cvdBonus = cvdAcc.direction === "bearish" ? 5
+                     : cvdAcc.direction === "bullish" ? -10 : 0;
+                     
       const depthScore = scoreSweepDepth(sweepRatio);
-      const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
+      const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty + cvdBonus), 0, 100);
+      const cvdReason = `CVD加速(${cvdAcc.direction}, slope=${cvdAcc.cvdSlope.toFixed(3)})`;
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
@@ -182,7 +195,7 @@ export function detectLiquiditySweep(
         structureScore,
         structureReason:
           `看跌流动性扫荡(物理确认): 刺破 ${matchedHigh.price.toFixed(0)} | ` +
-          `${oiResult.reason} | 能量指数: ${oiResult.crashIndex.toFixed(1)}R`,
+          `${oiResult.reason} | 能量指数: ${oiResult.crashIndex.toFixed(1)}R | ${cvdReason}`,
         invalidationReason: `1h收盘涨破 ${stopLossHint.toFixed(0)}`,
         confluenceFactors: ["liquidity-sweep"],
         confirmationStatus: "pending",

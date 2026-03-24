@@ -126,5 +126,47 @@ export function detectOrderFlowBias(
   };
 }
 
+export type CvdAccelerationResult = {
+  isAccelerating: boolean;  // CVD 是否在加速（动能增强）
+  accelerationScore: number; // 加速度评分（0–100）
+  direction: "bullish" | "bearish" | "neutral";
+  cvdSlope: number;
+};
+
+/**
+ * 计算 CVD 加速度（动能变化率）
+ * 将窗口三等分，对比最后 1/3 与前 2/3 的 CVD 斜率变化
+ */
+export function computeCvdAcceleration(
+  candles: Candle[],
+  window = 12
+): CvdAccelerationResult {
+  const recent = candles.slice(-window);
+  if (recent.length < 6) {
+    return { isAccelerating: false, accelerationScore: 50, direction: "neutral", cvdSlope: 0 };
+  }
+
+  const third = Math.floor(recent.length / 3);
+  const earlyCandles = recent.slice(0, third * 2);
+  const lateCandles  = recent.slice(third * 2);
+
+  const totalVol = recent.reduce((s, c) => s + c.volume, 0) || 1;
+  const earlyDelta = earlyCandles.reduce((s, c) => s + approxDelta(c), 0);
+  const lateDelta  = lateCandles.reduce((s, c) => s + approxDelta(c), 0);
+
+  // 归一化斜率：后段比前段的动能变化
+  const earlySlope = earlyDelta / (totalVol * 2 / 3);
+  const lateSlope  = lateDelta  / (totalVol * 1 / 3);
+  const acceleration = lateSlope - earlySlope;
+
+  const direction: "bullish" | "bearish" | "neutral" =
+    lateSlope > 0.03 ? "bullish" : lateSlope < -0.03 ? "bearish" : "neutral";
+
+  const isAccelerating = Math.abs(lateSlope) > Math.abs(earlySlope) * 1.2;
+  const accelerationScore = Math.min(100, 50 + Math.abs(acceleration) * 500);
+
+  return { isAccelerating, accelerationScore, direction, cvdSlope: lateSlope };
+}
+
 /** 导出类型别名，方便外部使用 */
 export type { CandleDelta, OrderFlowBias, OrderFlowResult };
