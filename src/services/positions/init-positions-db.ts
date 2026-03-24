@@ -27,9 +27,16 @@ export function initPositionsDb(db: Database.Database): void {
       closed_at        INTEGER,
       close_price      REAL,
       pnl_r            REAL,
-      updated_at       INTEGER NOT NULL
+      updated_at       INTEGER NOT NULL,
+      exchange_order_id TEXT
     )
   `).run();
+
+  try {
+    db.prepare("ALTER TABLE positions ADD COLUMN exchange_order_id TEXT").run();
+  } catch (e) {
+    // column already exists
+  }
 
   db.prepare("CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)").run();
   db.prepare("CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol)").run();

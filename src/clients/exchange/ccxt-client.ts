@@ -16,6 +16,7 @@ export interface ExchangeClient {
   fetchTicker(symbol: string): Promise<{ last: number }>;
   fetchSpotTicker(symbol: string): Promise<{ last: number }>;
   fetchBalance(): Promise<{ totalEquity: number; availableMargin: number }>;
+  createOrder?(symbol: string, type: "market" | "limit", side: "buy" | "sell", amount: number, price?: number, params?: any): Promise<{ id: string }>;
 }
 
 type TickerLike = {
@@ -53,9 +54,10 @@ type ExchangeLike = {
   ): Promise<unknown[]>;
   fetchTicker(symbol: string): Promise<unknown>;
   fetchBalance(): Promise<unknown>;
+  createOrder(symbol: string, type: string, side: string, amount: number, price?: number, params?: unknown): Promise<unknown>;
 };
 
-type ExchangeConstructor = new (options: { enableRateLimit: boolean }) => ExchangeLike;
+type ExchangeConstructor = new (options: { enableRateLimit: boolean, apiKey?: string, secret?: string }) => ExchangeLike;
 
 /**
  * 基于 ccxt 的交易所客户端实现。
@@ -65,6 +67,8 @@ type ExchangeConstructor = new (options: { enableRateLimit: boolean }) => Exchan
  *   2. 将 ccxt 原始响应规范化为系统内部领域类型；
  *   3. 对部分非关键接口失败进行降级处理。
  */
+import { env } from "../../app/env.js";
+
 export class CcxtClient implements ExchangeClient {
   private exchange: ExchangeLike | null;
   private spotExchange: ExchangeLike | null;
@@ -89,7 +93,11 @@ export class CcxtClient implements ExchangeClient {
       if (!ExchangeClass) {
         throw new Error(`Exchange not supported: ${this.exchangeName}`);
       }
-      this.exchange = new ExchangeClass({ enableRateLimit: true });
+      this.exchange = new ExchangeClass({ 
+        enableRateLimit: true,
+        apiKey: env.EXCHANGE_API_KEY,
+        secret: env.EXCHANGE_SECRET
+      });
     }
     return this.exchange;
   }
@@ -193,6 +201,12 @@ export class CcxtClient implements ExchangeClient {
       logger.warn({ err }, "fetchBalance failed, returning zero");
       return { totalEquity: 0, availableMargin: 0 };
     }
+  }
+
+  async createOrder(symbol: string, type: "market" | "limit", side: "buy" | "sell", amount: number, price?: number, params?: any): Promise<{ id: string }> {
+    const ex = await this.getExchange();
+    const order = asObject(await ex.createOrder(symbol, type, side, amount, price, params));
+    return { id: String(order.id) };
   }
 }
 

@@ -16,6 +16,7 @@ export function openPosition(
     recommendedBaseSize?: number;
     riskAmount?: number;
     accountRiskPercent?: number;
+    exchangeOrderId?: string;
   } = {}
 ): void {
   const id = buildId(candidate.symbol, candidate.direction, candidate.timeframe, candidate.entryHigh);
@@ -26,12 +27,12 @@ export function openPosition(
       id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
       capital_velocity_score, opened_at, status, be_activated, updated_at,
-      recommended_position_size, recommended_base_size, risk_amount, account_risk_percent
+      recommended_position_size, recommended_base_size, risk_amount, account_risk_percent, exchange_order_id
     ) VALUES (
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, 'open', 0, ?,
-      ?, ?, ?, ?
+      ?, ?, ?, ?, ?
     )
   `).run(
     id, candidate.symbol, candidate.direction, candidate.timeframe,
@@ -40,7 +41,8 @@ export function openPosition(
     options.recommendedPositionSize ?? null,
     options.recommendedBaseSize ?? null,
     options.riskAmount ?? null,
-    options.accountRiskPercent ?? null
+    options.accountRiskPercent ?? null,
+    options.exchangeOrderId ?? null
   );
 }
 
@@ -139,5 +141,6 @@ function mapRowToOpenPosition(row: any): OpenPosition {
     closedAt: row.closed_at || undefined,
     closePrice: row.close_price || undefined,
     pnlR: row.pnl_r || undefined,
+    exchangeOrderId: row.exchange_order_id || undefined,
   };
 }

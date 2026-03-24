@@ -2,6 +2,9 @@ import { z } from "zod";
 
 const EnvSchema = z.object({
   EXCHANGE_NAME: z.string().trim().default("binanceusdm"),
+  EXECUTION_MODE: z.enum(["paper", "live"]).default("paper"),
+  EXCHANGE_API_KEY: z.string().trim().optional(),
+  EXCHANGE_SECRET: z.string().trim().optional(),
   SYMBOL: z.string().trim().default("BTC/USDT:USDT"),
   SPOT_SYMBOL: z.string().trim().default("BTC/USDT"),
   TELEGRAM_BOT_TOKEN: z.string().trim().optional(),

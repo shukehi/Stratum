@@ -23,6 +23,8 @@ import { env } from "../app/env.js";
 import { cmdReport }    from "./cmd-report.js";
 import { cmdPositions } from "./cmd-positions.js";
 import { cmdBacktest }  from "./cmd-backtest.js";
+import { cmdVerify }    from "./cmd-verify.js";
+import { cmdScan }      from "./cmd-scan.js";
 import { bold, red, dim, cyan } from "./fmt.js";
 
 // ── 解析子命令 ────────────────────────────────────────────────────────────────
@@ -51,6 +53,16 @@ async function main(): Promise<void> {
 
     case "backtest": {
       await cmdBacktest(args, env.EXCHANGE_NAME, env.SPOT_SYMBOL, env.DATABASE_URL);
+      break;
+    }
+
+    case "verify": {
+      await cmdVerify();
+      break;
+    }
+
+    case "scan": {
+      await cmdScan(args);
       break;
     }
 
@@ -83,6 +95,13 @@ function printHelp(): void {
   console.log(bold("  回测:"));
   console.log(`    ${cyan("pnpm backtest")}                BTC 回测（500 根 4h K线）`);
   console.log(`    ${cyan("pnpm backtest --symbol ETHUSDT --limit 300")}  指定品种和数量`);
+  console.log();
+  console.log(bold("  实时执行:"));
+  console.log(`    ${cyan("pnpm cli scan")}               执行单次实时信号扫描并开模拟仓`);
+  console.log(`    ${cyan("pnpm cli scan --symbol ETHUSDT")}  对指定品种执行单次扫描`);
+  console.log();
+  console.log(bold("  环境配置:"));
+  console.log(`    ${cyan("pnpm cli verify")}             验证 API 链路与实盘配置是否正确`);
   console.log();
   console.log(dim("  注：report / positions 读取本地 SQLite，需先运行 pnpm dev 积累数据。"));
   console.log(dim("      backtest 从交易所实时拉取数据，需要网络连接。"));

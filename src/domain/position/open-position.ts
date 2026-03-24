@@ -47,4 +47,5 @@ export type OpenPosition = {
   closedAt?: number;  // Unix 毫秒时间戳，仅在仓位已平仓时存在
   closePrice?: number;
   pnlR?: number;      // 平仓后填充
+  exchangeOrderId?: string; // TASK-P3-C: 实盘 API 执行记录
 };

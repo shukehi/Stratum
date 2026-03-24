@@ -1,4 +1,4 @@
-# Stratum 指令与操作手册 (V2.0 Physics)
+# Stratum 指令与操作手册 (v0.13 Physics)
 
 ## 启动系统 (FSD Mode)
 
@@ -60,8 +60,15 @@ pnpm report --logs
 ```bash
 # 运行 3-Sigma 物理验证回测
 pnpm backtest --symbol BTCUSDT --limit 500
+
+# 验证 API 链路与实盘配置 (TASK-P3-C)
+pnpm cli verify
+
+# 全息信号单次实时扫描 (Dry-run)
+pnpm cli scan
 ```
 **数据驱动准则**：系统优先使用本地缓存 K 线，自动执行全链路物理重放。
+**实时扫描**：`scan` 指令直接从交易所获取当前实时 Tick/K线数据进行感应识别。
 
 ---
 
@@ -76,10 +83,12 @@ pnpm backtest --symbol BTCUSDT --limit 500
 
 ---
 
-## 信号扫描时间 (UTC)
-
-收盘后 30 秒触发，毫秒级完成物理感应：
+### 常规 UTC 调度
+收盘后 30 秒自动触发，毫秒级完成物理感应：
 `00:00:30` · `04:00:30` · `08:00:30` · `12:00:30` · `16:00:30` · `20:00:30`
+
+### 事件驱动监听 (TASK-P3-B)
+**WebSocket 实时触发**：系统全天候监听 OI 异动，捕捉到 2-Sigma OI 坍缩时即刻拉起全盘物理扫描。
 
 ---
 **"No human interaction required. The machine obeys only physical data."**

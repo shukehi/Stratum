@@ -10,6 +10,7 @@ import type { OrderFlowBias } from "../../domain/market/order-flow.js";
 import type { StrategyConfig } from "../../app/config.js";
 import Database from "better-sqlite3";
 import { strategyConfig } from "../../app/config.js";
+import { env } from "../../app/env.js";
 import { logger } from "../../app/logger.js";
 import { fetchMarketData } from "../market-data/fetch-market-data.js";
 import { fetchFundingRates } from "../market-data/fetch-funding-rates.js";
@@ -211,14 +212,53 @@ export async function runSignalScan(
     const finalStatus = "sent"; // FSD 模式下，无论静默与否，逻辑状态均为已发送/已执行
     const deliveryCompletedAt = Date.now();
 
+    let exchangeOrderId: string | undefined;
+
+    if (env.EXECUTION_MODE === "live") {
+      const side = candidate.direction === "long" ? "buy" : "sell";
+      const amount = positionSizing.recommendedBaseSize; 
+      
+      if (amount && amount > 0 && client.createOrder) {
+        try {
+          const orderRes = await client.createOrder(
+            candidate.symbol,
+            "market",
+            side,
+            amount,
+            undefined,
+            {
+              stopLossPrice: candidate.stopLoss,
+              takeProfitPrice: candidate.takeProfit
+            }
+          );
+          exchangeOrderId = orderRes.id;
+          logger.info(
+            { symbol: candidate.symbol, orderId: exchangeOrderId, amount, side },
+            "实盘环境开单成功！"
+          );
+        } catch (err: any) {
+          logger.error(
+            { err: err.message, symbol: candidate.symbol },
+            "实盘环境下单失败！拦截数据库落库写入！"
+          );
+          alertsFailed++;
+          continue; // 终止后续操作，拒绝该笔信号入库
+        }
+      } else {
+        logger.warn({ symbol: candidate.symbol }, "尝试实盘开单跳过：数量不足或 client 未支持该方法");
+      }
+    }
+
     db.transaction(() => {
       updateAlertStatus(db, candidate.symbol, candidate.direction, candidate.timeframe, candidate.entryHigh, finalStatus, { deliveryCompletedAt });
       updateCandidateSnapshotOutcome(db, snapshotId, finalStatus, { alertStatus: finalStatus, deliveryCompletedAt });
       // 在 FSD 模式下，必定触发开仓（自动驾驶闭环）
       openPosition(db, candidate, scannedAt, {
         recommendedPositionSize: positionSizing.recommendedPositionSize,
+        recommendedBaseSize: positionSizing.recommendedBaseSize,
         riskAmount: positionSizing.riskAmount,
-        accountRiskPercent: positionSizing.accountRiskPercent
+        accountRiskPercent: positionSizing.accountRiskPercent,
+        exchangeOrderId // TASK-P3-C: 实盘 API 执行记录
       });
     })();
 
