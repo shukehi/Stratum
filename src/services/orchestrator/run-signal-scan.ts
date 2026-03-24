@@ -39,6 +39,7 @@ import { detectOrderFlowBias } from "../analysis/compute-cvd.js";
 import { buildPositionSizingSummary } from "../risk/compute-position-size.js";
 import { evaluateSwappingGate } from "../risk/evaluate-exposure-gate.js";
 import { closePosition, getOpenPositions, getOpenRiskSummary, openPosition } from "../positions/track-position.js";
+import { detectOiCrash } from "../analysis/detect-oi-crash.js";
 
 /**
  * 信号扫描工作流编排器  (PHASE_09 - V3 Physics Refactor)
@@ -68,6 +69,9 @@ export type SignalScanResult = {
   errors: string[];
   skipStage?: "context_gate" | "structure" | "consensus";
   skipReasonCode?: ReasonCode;
+  /** OI 感应层物理动能索引 (3-Sigma crashIndex)，负值越大代表能量释放越强 */
+  oiCrashIndex?: number;
+  oiIsCrash?: boolean;
 };
 
 export async function runSignalScan(
@@ -95,6 +99,14 @@ export async function runSignalScan(
 
   saveCandles(db, symbol, "4h", candles4h);
   saveCandles(db, symbol, "1h", candles1h);
+
+  // ── [感应层] OI 3-Sigma 物理动能检测 ──────────────────────────────────────
+  // 显式执行，使感应层成为流水线中真实存在的门控节点，而非隐式嵌入结构检测内部。
+  const oiCrashResult = detectOiCrash(openInterest, candles4h.map(c => c.close));
+  logger.info(
+    { symbol, crashIndex: oiCrashResult.crashIndex.toFixed(2), isCrash: oiCrashResult.isCrash },
+    `Physics Sensing Layer: ${oiCrashResult.reason}`
+  );
 
   const dailyBiasResult = detectDailyBias(candles1d, config.vpLookbackDays, config.vpBucketCount, config.vpValueAreaPercent);
   const orderFlowResult = detectOrderFlowBias(candles4h, config.cvdWindow, config.cvdNeutralThreshold);
@@ -213,7 +225,10 @@ export async function runSignalScan(
     regime: ctx.regime, participantPressureType: ctx.participantPressureType,
     dailyBias: dailyBiasResult?.bias, orderFlowBias: orderFlowResult.bias,
     basisDivergence: ctx.basisDivergence, marketDriverType: ctx.marketDriverType,
-    liquiditySession: ctx.liquiditySession, errors
+    liquiditySession: ctx.liquiditySession,
+    oiCrashIndex: oiCrashResult.crashIndex,
+    oiIsCrash: oiCrashResult.isCrash,
+    errors
   };
   saveScanLog(db, finalResult);
   return finalResult;

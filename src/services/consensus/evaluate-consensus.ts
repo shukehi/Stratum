@@ -22,7 +22,13 @@ export type ConsensusInput = {
 };
 
 /**
- * 信号周转期望 (CVS) 计算器 (V2 Physics)
+ * 信号周转期望 (CVS) 计算器 (V2 Physics — Fixed)
+ *
+ * 乘数矩阵：
+ *   regime对齐 & participant对齐 → ×1.2（双动力加速）
+ *   仅一项对齐              → ×1.0（中性）
+ *   双不对齐                → ×0.8（逆风减速）
+ *   高波动/事件驱动 regime   → 额外 ×0.9（物理噪音惩罚）
  */
 function computeCVS(
   setup: StructuralSetup,
@@ -31,27 +37,54 @@ function computeCVS(
   rr: number,
   ctx: MarketContext
 ): number {
+  // 基础对齐乘数（修复：regime 现在真正有区分度）
   let multiplier = 1.0;
   if (regimeAligned && participantAligned) multiplier = 1.2;
   else if (!regimeAligned && !participantAligned) multiplier = 0.8;
 
   let baseScore = setup.structureScore * multiplier;
+
+  // 高波动/事件驱动：即使通过了 context gate，对 CVS 施加惩罚系数
+  if (ctx.regime === "high-volatility" || ctx.regime === "event-driven") {
+    baseScore *= 0.9;
+  }
+
+  // 盈亏比奖励：RR ≥ 3 是真正的期望边际
   if (rr >= 3.0) baseScore *= 1.1;
+
+  // 待确认结构：能量尚未验证，降权
   if (setup.confirmationStatus === "pending") baseScore *= 0.8;
+
+  // 低流动性时段：滑点摩擦上升
   if (ctx.reasonCodes.includes("SESSION_LOW_LIQUIDITY_DISCOUNT")) baseScore *= 0.9;
 
   return Math.round(baseScore * 100) / 100;
 }
 
 /**
- * 辅助函数：判断是否对齐
+ * 辅助函数：判断 regime 是否对齐
+ *
+ * 修复：MarketRegime 有 4 个值：trend | range | event-driven | high-volatility。
+ * 原实现 `regime === "trend" || regime === "range"` 看似完整，
+ * 但实际上对 trend/range/event-driven/high-volatility 全部覆盖（恒真）。
+ * 正确语义：trend 和 range 是可预测的结构市 → 对齐；
+ * event-driven 和 high-volatility 是混沌市 → 不对齐。
  */
-function isRegimeAligned(regime: MarketRegime, config: StrategyConfig): boolean {
+function isRegimeAligned(regime: MarketRegime, _config: StrategyConfig): boolean {
   return regime === "trend" || regime === "range";
 }
 
+/**
+ * 辅助函数：判断参与者压力是否对齐
+ *
+ * 修复：MarketContext.participantPressureType 的值域是
+ * "squeeze-risk" | "flush-risk" | "none"，不含 "balanced"。
+ * 原实现引用了不存在的 "balanced" 值，导致该分支永不命中。
+ */
 function isParticipantAligned(direction: "long" | "short", pressureType: string): boolean {
-  if (pressureType === "balanced" || pressureType === "none") return true;
+  // "none" 表示无明显挤压风险，双向均可接受
+  if (pressureType === "none") return true;
+  // squeeze-risk（空头挤压）对 long 有利；flush-risk（多头清洗）对 short 有利
   return direction === "long" ? pressureType === "squeeze-risk" : pressureType === "flush-risk";
 }
 

@@ -56,11 +56,14 @@ export function detectLiquiditySweep(
 ): StructuralSetup[] {
   if (candles.length < 10) return [];
 
-  const oiResult = detectOiCrash(oiPoints);
+  const closePrices = candles.map(c => c.close);
+  const oiResult = detectOiCrash(oiPoints, closePrices);
   if (!oiResult.isCrash) {
     // 马斯克指令：没有能量释放，就没有信号。
     return [];
   }
+
+  const directionPenalty = oiResult.mechanismType === "mixed_deleveraging" ? -10 : 0;
 
   const results: StructuralSetup[] = [];
   // 基准 ATR
@@ -95,7 +98,10 @@ export function detectLiquiditySweep(
       
       // 动能加成：crashIndex 越负，能量越强
       const momentumBonus = Math.abs(oiResult.crashIndex) * 5;
-      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus), 0, 100);
+      const mechanismBonus = oiResult.mechanismType === "long_liquidation" ? 5
+                           : oiResult.mechanismType === "short_squeeze"    ? -15
+                           : 0;
+      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
@@ -129,7 +135,10 @@ export function detectLiquiditySweep(
       const sweepRatio = sweepDepth / baselineAtr;
 
       const momentumBonus = Math.abs(oiResult.crashIndex) * 5;
-      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus), 0, 100);
+      const mechanismBonus = oiResult.mechanismType === "short_squeeze"    ? 5
+                           : oiResult.mechanismType === "long_liquidation" ? -15
+                           : 0;
+      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,

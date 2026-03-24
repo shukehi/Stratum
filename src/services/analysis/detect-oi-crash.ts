@@ -17,16 +17,25 @@ import { logger } from "../../app/logger.js";
  *   Index < -3.0  => 强力坍缩 (3-Sigma Crash)
  */
 
+export type OiLiquidationMechanism =
+  | "long_liquidation"   // OI↓ + Price↓ → 多头被清算 → 支持看涨 Sweep
+  | "short_squeeze"      // OI↓ + Price↑ → 空头被清算 → 支持看跌 Sweep  
+  | "mixed_deleveraging" // OI↓ + Price 震荡 → 双向排毒，方向不明
+  | "unknown";           // 样本不足
+
 export type OiCrashResult = {
   isCrash: boolean;
   crashIndex: number; // 偏离标准差的倍数 (负数表示减少)
   currentRate: number;
   threshold: number;
   reason: string;
+  mechanismType: OiLiquidationMechanism;
+  priceChangePct: number;
 };
 
 export function detectOiCrash(
   oiPoints: OpenInterestPoint[],
+  closePrices?: number[],
   lookback = 50,
   sigmaThreshold = 3.0
 ): OiCrashResult {
@@ -37,6 +46,8 @@ export function detectOiCrash(
       currentRate: 0,
       threshold: sigmaThreshold,
       reason: "OI 样本不足，跳过动能验证",
+      mechanismType: "unknown",
+      priceChangePct: 0,
     };
   }
 
@@ -57,6 +68,8 @@ export function detectOiCrash(
       currentRate: 0,
       threshold: sigmaThreshold,
       reason: "变动率样本不足",
+      mechanismType: "unknown",
+      priceChangePct: 0,
     };
   }
 
@@ -73,6 +86,23 @@ export function detectOiCrash(
   const crashIndex = (currentRate - mean) / stdDev;
   const isCrash = crashIndex < -sigmaThreshold;
 
+  let mechanismType: OiLiquidationMechanism = "unknown";
+  let priceChangePct = 0;
+
+  if (closePrices && closePrices.length >= 2) {
+    const recentPrices = closePrices.slice(-2); // 只取最近2根
+    priceChangePct = (recentPrices[1] - recentPrices[0]) / recentPrices[0];
+    const PRICE_DIRECTION_THRESHOLD = 0.001; // 0.1% 以内视为横盘
+
+    if (priceChangePct < -PRICE_DIRECTION_THRESHOLD) {
+      mechanismType = "long_liquidation";   // OI↓ + Price↓ → 多头被清算
+    } else if (priceChangePct > PRICE_DIRECTION_THRESHOLD) {
+      mechanismType = "short_squeeze";       // OI↓ + Price↑ → 空头被逼空
+    } else {
+      mechanismType = "mixed_deleveraging"; // OI↓ + Price≈0 → 双向排毒
+    }
+  }
+
   const result: OiCrashResult = {
     isCrash,
     crashIndex,
@@ -81,6 +111,8 @@ export function detectOiCrash(
     reason: isCrash
       ? `检测到物理坍缩: OI变动率 ${ (currentRate * 100).toFixed(2) }% 偏离均值 ${ crashIndex.toFixed(1) } 倍标准差`
       : `动能正常: OI变动率在 ${ sigmaThreshold }-Sigma 噪音范围内 (${ crashIndex.toFixed(1) } Sigma)`,
+    mechanismType,
+    priceChangePct,
   };
 
   if (isCrash) {
