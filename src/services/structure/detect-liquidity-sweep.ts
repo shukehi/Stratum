@@ -40,6 +40,36 @@ export function detectSwingPoints(candles: Candle[], lookback = 3): SwingPoint[]
 }
 
 /**
+ * Sweep 深度非线性评分（倒 U 型曲线）
+ *
+ * sweepRatio（刺穿深度 / ATR）与信号质量的物理关系：
+ *   < 0.3x ATR  → 深度不足：未触发足量止损，动能湮灭不充分 → 40分基础
+ *   0.3–0.5x    → 过渡区：线性增长爬坡
+ *   0.5–1.5x    → 最优区间：止损湮灭充分 + 价格能收回 → 80–100分
+ *   1.5–2.5x    → 衰减区：深度过大，收回难度上升 → 线性下降
+ *   > 2.5x ATR  → 危险区：可能已是结构翻转而非 Sweep → 强制降权
+ */
+export function scoreSweepDepth(sweepRatio: number): number {
+  if (sweepRatio < 0.3) {
+    return 40; // 深度不足
+  }
+  if (sweepRatio <= 0.5) {
+    // 0.3–0.5：爬坡段（40→80）
+    return 40 + ((sweepRatio - 0.3) / 0.2) * 40;
+  }
+  if (sweepRatio <= 1.5) {
+    // 0.5–1.5：最优区间（80→100）
+    return 80 + ((sweepRatio - 0.5) / 1.0) * 20;
+  }
+  if (sweepRatio <= 2.5) {
+    // 1.5–2.5：衰减段（100→60）
+    return 100 - ((sweepRatio - 1.5) / 1.0) * 40;
+  }
+  // > 2.5：危险区（强制 ≤ 50，且越深越低）
+  return Math.max(20, 60 - (sweepRatio - 2.5) * 20);
+}
+
+/**
  * 流动性扫描检测 (Liquidity Sweep)  (PHASE_05 - V3 Physics Refactor)
  *
  * 物理准则：
@@ -101,7 +131,8 @@ export function detectLiquiditySweep(
       const mechanismBonus = oiResult.mechanismType === "long_liquidation" ? 5
                            : oiResult.mechanismType === "short_squeeze"    ? -15
                            : 0;
-      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
+      const depthScore = scoreSweepDepth(sweepRatio);
+      const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
@@ -138,7 +169,8 @@ export function detectLiquiditySweep(
       const mechanismBonus = oiResult.mechanismType === "short_squeeze"    ? 5
                            : oiResult.mechanismType === "long_liquidation" ? -15
                            : 0;
-      const structureScore = clamp(Math.round(65 + sweepRatio * 20 + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
+      const depthScore = scoreSweepDepth(sweepRatio);
+      const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty), 0, 100);
 
       results.push({
         timeframe: config.liquiditySweepConfirmationTimeframe,
