@@ -86,6 +86,7 @@ echo "Running verification..."
 echo "Update succeeded."
 echo "Log file: ${LOG_FILE}"
 
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "$SERVICE_NAME" >/dev/null 2>&1; then
   echo "Restarting $SERVICE_NAME..."
   if [[ "${EUID}" -eq 0 ]]; then
     systemctl restart "$SERVICE_NAME"
