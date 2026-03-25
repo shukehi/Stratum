@@ -252,6 +252,7 @@ export async function generateFullChainBacktestSignals(
         openedAt: current4h.timestamp,
         status: "open",
         accountRiskPercent: config.riskPerTrade,
+        executionMode: "paper",
       });
     }
   }

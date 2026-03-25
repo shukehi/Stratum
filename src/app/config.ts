@@ -27,6 +27,12 @@ export type StrategyConfig = {
   readonly minRegimeScoreGap: number;
   readonly trendExtensionAtrPenaltyThreshold: number;
 
+  // --- 信号衰减参数 ---
+  readonly signalHalfLifeTrendMs: number;         // 趋势市半衰期（默认 4h）
+  readonly signalHalfLifeRangeMs: number;          // 震荡市半衰期（默认 2h）
+  readonly signalHalfLifeHighVolMs: number;        // 高波动市半衰期（默认 1.5h）
+  readonly signalHalfLifeEventMs: number;          // 事件驱动市半衰期（默认 30min）
+
   // --- 参与者压力 ---
   readonly minParticipantConfidence: number;
   readonly oiCollapseVacuumThresholdPercent: number;
@@ -41,6 +47,16 @@ export type StrategyConfig = {
   readonly confirmationShadowRatio: number;
   readonly confirmationCandles: number;
   readonly requireCvdAlignmentForSweep: boolean; // 是否要求 CVD 方向对齐（默认 false，降权但不屏蔽）
+  readonly fvgRequireOiActivity: boolean;       // 是否要求 FVG 有 OI 活跃度（默认 true）
+  readonly fvgOiActivitySigmaThreshold: number; // FVG OI 活跃度门槛 σ（默认 1.0，比 Sweep 宽松）
+  readonly fvgOiInactivityPenalty: number;       // OI 不活跃时的评分惩罚（默认 -15）
+  readonly fvgOiActivityBonus: number;          // OI 活跃时的评分加成（默认 +8）
+
+  // --- Sweep 深度区间 ---
+  readonly sweepOptimalUpperTrend: number;     // 趋势市最优区间上界（默认 2.0）
+  readonly sweepOptimalUpperRange: number;     // 震荡市最优区间上界（默认 1.5）— 当前硬编码值
+  readonly sweepOptimalUpperHighVol: number;   // 高波动市最优区间上界（默认 1.2）
+  readonly sweepDangerMultiplier: number;      // 危险区起始 = 最优上界 × 此倍数（默认 1.67）
 
   // --- 交易时段 ---
   readonly enableSessionAdjustment: boolean;
@@ -52,6 +68,10 @@ export type StrategyConfig = {
   readonly maxCorrelatedSignalsPerDirection: number;
   readonly maxSameDirectionOpenRiskPercent: number;
   readonly maxPortfolioOpenRiskPercent: number;
+
+  // --- 品种集中度 ---
+  readonly maxPositionsPerSymbol: number;       // 单品种最大持仓数（默认 3）
+  readonly singleSymbolRiskWarning: boolean;    // 单品种模式警告开关（默认 true）
 
   // --- 事件与语义 ---
   readonly recentEventWatchWindowHours: number;
@@ -80,6 +100,10 @@ export type StrategyConfig = {
   readonly baseSlippagePct: number;          // 基础滑点（默认 0.001 = 0.1%）
   readonly sessionSlippageMultiplier: number; // 低流动性时段滑点倍数（默认 2.5）
 
+  // --- 市场冲击成本 ---
+  readonly impactCostSensitivity: number;   // 冲击成本敏感系数（默认 0.1）
+  readonly impactCostDailyVolumeUsd: number; // 日均成交额基准 USD（默认 1_000_000_000，BTC 约 30B）
+
   // --- CSP 资本置换协议 ---
   readonly cspSwapThresholdTrend: number;         // 趋势市置换门槛（默认 1.1）
   readonly cspSwapThresholdRange: number;          // 震荡市置换门槛（默认 1.25）
@@ -106,6 +130,12 @@ export const strategyConfig = {
   minRegimeScoreGap: 10,
   trendExtensionAtrPenaltyThreshold: 2.0,
 
+  // --- 信号衰减参数 ---
+  signalHalfLifeTrendMs: 4 * 3_600_000,      // 4h
+  signalHalfLifeRangeMs: 2 * 3_600_000,      // 2h
+  signalHalfLifeHighVolMs: 1.5 * 3_600_000,  // 1.5h
+  signalHalfLifeEventMs: 30 * 60_000,        // 30min
+
   // --- 参与者压力 ---
   minParticipantConfidence: 60,
   oiCollapseVacuumThresholdPercent: 0.1,
@@ -120,6 +150,16 @@ export const strategyConfig = {
   confirmationShadowRatio: 0.5,
   confirmationCandles: 2,
   requireCvdAlignmentForSweep: false,
+  fvgRequireOiActivity: true,
+  fvgOiActivitySigmaThreshold: 1.0,
+  fvgOiInactivityPenalty: -15,
+  fvgOiActivityBonus: 8,
+
+  // --- Sweep 深度区间 ---
+  sweepOptimalUpperTrend: 2.0,
+  sweepOptimalUpperRange: 1.5,
+  sweepOptimalUpperHighVol: 1.2,
+  sweepDangerMultiplier: 1.67,
 
   // --- 交易时段 ---
   enableSessionAdjustment: true,
@@ -131,6 +171,10 @@ export const strategyConfig = {
   maxCorrelatedSignalsPerDirection: 2,
   maxSameDirectionOpenRiskPercent: 0.02,
   maxPortfolioOpenRiskPercent: 0.03,
+
+  // --- 品种集中度 ---
+  maxPositionsPerSymbol: 3,
+  singleSymbolRiskWarning: true,
 
   // --- 事件与语义 ---
   recentEventWatchWindowHours: 12,
@@ -158,6 +202,10 @@ export const strategyConfig = {
   // --- 摩擦力参数 ---
   baseSlippagePct: 0.001,
   sessionSlippageMultiplier: 2.5,
+
+  // --- 市场冲击成本 ---
+  impactCostSensitivity: 0.1,
+  impactCostDailyVolumeUsd: 1_000_000_000,
 
   // --- CSP 资本置换协议 ---
   cspSwapThresholdTrend: 1.1,

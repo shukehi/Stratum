@@ -158,10 +158,10 @@ export async function runSignalScan(
   let alertsSent = 0;
   let alertsFailed = 0;
   let alertsSkipped = 0;
-  const openPositions = getOpenPositions(db);
+  const openPositions = getOpenPositions(db, env.EXECUTION_MODE as "paper" | "live");
 
   for (const candidate of candidates) {
-    const portfolioExposure = getOpenRiskSummary(db);
+    const portfolioExposure = getOpenRiskSummary(db, undefined, env.EXECUTION_MODE as "paper" | "live");
     const swappingDecision = evaluateSwappingGate({
       candidate,
       openPositions,
@@ -258,7 +258,8 @@ export async function runSignalScan(
         recommendedBaseSize: positionSizing.recommendedBaseSize,
         riskAmount: positionSizing.riskAmount,
         accountRiskPercent: positionSizing.accountRiskPercent,
-        exchangeOrderId // TASK-P3-C: 实盘 API 执行记录
+        exchangeOrderId, // TASK-P3-C: 实盘 API 执行记录
+        executionMode: env.EXECUTION_MODE as "paper" | "live"
       });
     })();
 

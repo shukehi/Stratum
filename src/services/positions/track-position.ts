@@ -17,9 +17,11 @@ export function openPosition(
     riskAmount?: number;
     accountRiskPercent?: number;
     exchangeOrderId?: string;
+    executionMode?: "paper" | "live";
   } = {}
 ): void {
   const id = buildId(candidate.symbol, candidate.direction, candidate.timeframe, candidate.entryHigh);
+  const executionMode = options.executionMode ?? "paper";
   const now = Date.now();
 
   db.prepare(`
@@ -27,12 +29,12 @@ export function openPosition(
       id, symbol, direction, timeframe,
       entry_low, entry_high, stop_loss, take_profit, risk_reward,
       capital_velocity_score, opened_at, status, be_activated, updated_at,
-      recommended_position_size, recommended_base_size, risk_amount, account_risk_percent, exchange_order_id
+      recommended_position_size, recommended_base_size, risk_amount, account_risk_percent, exchange_order_id, execution_mode
     ) VALUES (
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, 'open', 0, ?,
-      ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?
     )
   `).run(
     id, candidate.symbol, candidate.direction, candidate.timeframe,
@@ -42,7 +44,8 @@ export function openPosition(
     options.recommendedBaseSize ?? null,
     options.riskAmount ?? null,
     options.accountRiskPercent ?? null,
-    options.exchangeOrderId ?? null
+    options.exchangeOrderId ?? null,
+    executionMode
   );
 }
 
@@ -101,25 +104,25 @@ export function findPosition(
   return row ? mapRowToOpenPosition(row) : undefined;
 }
 
-export function getOpenPositions(db: Database.Database): OpenPosition[] {
-  const rows = db.prepare("SELECT * FROM positions WHERE status = 'open'").all() as any[];
+export function getOpenPositions(db: Database.Database, executionMode: "paper" | "live" = "paper"): OpenPosition[] {
+  const rows = db.prepare("SELECT * FROM positions WHERE status = 'open' AND execution_mode = ?").all(executionMode) as any[];
   return rows.map(mapRowToOpenPosition);
 }
 
-export function getOpenRiskSummary(db: Database.Database, direction?: "long" | "short") {
+export function getOpenRiskSummary(db: Database.Database, direction?: "long" | "short", executionMode: "paper" | "live" = "paper") {
   const query = direction 
-    ? "SELECT COUNT(*) as count, SUM(account_risk_percent) as risk FROM positions WHERE status = 'open' AND direction = ?"
-    : "SELECT COUNT(*) as count, SUM(account_risk_percent) as risk FROM positions WHERE status = 'open'";
+    ? "SELECT COUNT(*) as count, SUM(account_risk_percent) as risk FROM positions WHERE status = 'open' AND direction = ? AND execution_mode = ?"
+    : "SELECT COUNT(*) as count, SUM(account_risk_percent) as risk FROM positions WHERE status = 'open' AND execution_mode = ?";
   
-  const row = (direction ? db.prepare(query).get(direction) : db.prepare(query).get()) as { count: number, risk: number | null };
+  const row = (direction ? db.prepare(query).get(direction, executionMode) : db.prepare(query).get(executionMode)) as { count: number, risk: number | null };
   return {
     openCount: row.count,
     openRiskPercent: row.risk || 0
   };
 }
 
-export function countOpenByDirection(db: Database.Database, direction: "long" | "short"): number {
-  return getOpenRiskSummary(db, direction).openCount;
+export function countOpenByDirection(db: Database.Database, direction: "long" | "short", executionMode: "paper" | "live" = "paper"): number {
+  return getOpenRiskSummary(db, direction, executionMode).openCount;
 }
 
 function mapRowToOpenPosition(row: any): OpenPosition {
@@ -142,5 +145,6 @@ function mapRowToOpenPosition(row: any): OpenPosition {
     closePrice: row.close_price || undefined,
     pnlR: row.pnl_r || undefined,
     exchangeOrderId: row.exchange_order_id || undefined,
+    executionMode: (row.execution_mode ?? "paper") as "paper" | "live",
   };
 }

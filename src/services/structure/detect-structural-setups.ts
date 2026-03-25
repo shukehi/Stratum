@@ -71,10 +71,17 @@ export function analyzeStructuralSetups(
   }
 
   // ── 3. 检测 FVG（仅 4h，与 sweep 完全独立） ────────────────────────────
-  const fvgSetups = detectFvg(candles4h, "4h", config);
+  const fvgSetups = detectFvg(candles4h, "4h", config, 30, oiPoints);
 
   // ── 4. 检测流动性扫描（4h 收盘确认）- V3 PHYSICS ENFORCED ─────────────────
-  const sweepSetups = detectLiquiditySweep(candles4h, config, oiPoints);
+  const sweepOptimalUpper = {
+    "trend":          config.sweepOptimalUpperTrend,
+    "range":          config.sweepOptimalUpperRange,
+    "high-volatility": config.sweepOptimalUpperHighVol,
+    "event-driven":   config.sweepOptimalUpperHighVol, // 事件驱动使用最保守值
+  }[ctx.regime] ?? config.sweepOptimalUpperRange;
+
+  const sweepSetups = detectLiquiditySweep(candles4h, config, oiPoints, 5, sweepOptimalUpper);
 
   // ── 5. 合并并应用复合结构加分 ─────────────────────────────────────────────
   const combined = [...fvgSetups, ...sweepSetups];

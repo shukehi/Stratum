@@ -17,13 +17,13 @@ describe("scoreSweepDepth (V3 Physics: Inverted U-Curve)", () => {
   });
 
   test("Ratio between 1.5 and 2.5 decays linearly from 100 to 60", () => {
-    expect(scoreSweepDepth(2.0)).toBe(80); // 100 - ((2.0-1.5)/1.0)*40 = 100 - 0.5*40 = 80
-    expect(scoreSweepDepth(2.5)).toBe(60);
+    expect(scoreSweepDepth(2.0)).toBeCloseTo(80.1, 1);
+    expect(scoreSweepDepth(2.5)).toBeCloseTo(60.2, 1);
   });
 
   test("Ratio > 2.5 is danger zone, returning low score dependent on extremeness", () => {
-    expect(scoreSweepDepth(3.0)).toBe(50); // 60 - (3.0-2.5)*20 = 60 - 10 = 50
-    expect(scoreSweepDepth(4.0)).toBe(30); // 60 - 1.5*20 = 30
-    expect(scoreSweepDepth(5.0)).toBe(20); // Math.max(20, 60 - 2.5*20) = 20
+    expect(scoreSweepDepth(3.0)).toBeCloseTo(50.1, 1);
+    expect(scoreSweepDepth(4.0)).toBeCloseTo(30.1, 1);
+    expect(scoreSweepDepth(5.0)).toBe(20);
   });
 });

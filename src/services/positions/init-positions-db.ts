@@ -28,7 +28,8 @@ export function initPositionsDb(db: Database.Database): void {
       close_price      REAL,
       pnl_r            REAL,
       updated_at       INTEGER NOT NULL,
-      exchange_order_id TEXT
+      exchange_order_id TEXT,
+      execution_mode  TEXT NOT NULL DEFAULT 'paper'
     )
   `).run();
 
@@ -36,6 +37,12 @@ export function initPositionsDb(db: Database.Database): void {
     db.prepare("ALTER TABLE positions ADD COLUMN exchange_order_id TEXT").run();
   } catch (e) {
     // column already exists
+  }
+
+  try {
+    db.prepare("ALTER TABLE positions ADD COLUMN execution_mode TEXT DEFAULT 'paper'").run();
+  } catch (e) {
+    // column already exists - idempotent
   }
 
   db.prepare("CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)").run();

@@ -1,5 +1,6 @@
 import { env } from "./app/env.js";
 import { logger } from "./app/logger.js";
+import { strategyConfig } from "./app/config.js";
 import { CcxtClient } from "./clients/exchange/ccxt-client.js";
 import { openDb } from "./services/persistence/init-db.js";
 import { runSignalScan } from "./services/orchestrator/run-signal-scan.js";
@@ -89,11 +90,39 @@ async function main(): Promise<void> {
 
   const perpSymbol = env.SYMBOL.replace("/", "").replace(":USDT", ""); // "BTC/USDT:USDT" → "BTCUSDT"
 
+  if (strategyConfig.singleSymbolRiskWarning) {
+    const symbols = [perpSymbol]; // 扫描品种列表
+    if (symbols.length === 1) {
+      logger.warn(
+        { symbol: symbols[0] },
+        "⚠️ 单品种模式：所有持仓集中于同一标的。考虑增加扫描品种以分散风险。"
+      );
+    }
+  }
+
   const scanDeps = {
     client,
     db,
     notificationConfig,
   };
+
+  let isScanning = false;
+
+  // 包装扫描函数，确保互斥（返回 void，lastScanAt 在闭包内赋值）
+  async function exclusiveScan(trigger: string): Promise<void> {
+    if (isScanning) {
+      logger.warn({ trigger }, "Scan 互斥锁生效：跳过本次扫描（上一次扫描仍在进行中）");
+      return;
+    }
+    isScanning = true;
+    try {
+      logger.info({ trigger }, "Scan 开始执行");
+      const result = await runSignalScan(perpSymbol, env.SPOT_SYMBOL, scanDeps);
+      lastScanAt = result.scannedAt;
+    } finally {
+      isScanning = false;
+    }
+  }
 
   let stopDiscordBot: (() => Promise<void>) | null = null;
   let stopTelegramCommandBot: (() => void) | null = null;
@@ -178,9 +207,7 @@ async function main(): Promise<void> {
   // ── 调度器 1：信号扫描（每 4h UTC 边界）───────────────────────────────────
   const signalScheduler = runScheduler(
     async () => {
-      const result = await runSignalScan(perpSymbol, env.SPOT_SYMBOL, scanDeps);
-      lastScanAt = result.scannedAt;
-      return result;
+      await exclusiveScan("4h-scheduler");
     },
     {
       intervalMs: 4 * 60 * 60 * 1000, // 4h
@@ -209,8 +236,7 @@ async function main(): Promise<void> {
         // 清理前 25 个点以留取一半空白期，避免下个 3 秒马上又重复报
         oiPointsWindow = oiPointsWindow.slice(25);
         try {
-          const result = await runSignalScan(perpSymbol, env.SPOT_SYMBOL, scanDeps);
-          lastScanAt = result.scannedAt;
+          await exclusiveScan("ws-oi-event");
         } catch(err) {
           logger.error({ err }, "WebSocket 事件驱动引发的扫描发生致命异常");
         }

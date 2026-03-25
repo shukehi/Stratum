@@ -2,6 +2,8 @@ import type { Candle } from "../../domain/market/candle.js";
 import type { StructuralSetup } from "../../domain/signal/structural-setup.js";
 import type { StrategyConfig } from "../../app/config.js";
 import { clamp } from "../../utils/math.js";
+import { detectOiCrash } from "../analysis/detect-oi-crash.js";
+import type { OpenInterestPoint } from "../../domain/market/open-interest.js";
 
 /**
  * FVG 检测 (Fair Value Gap / 公允价值缺口)  (PHASE_05)
@@ -20,10 +22,26 @@ export function detectFvg(
   candles: Candle[],
   timeframe: "4h" | "1h",
   config: StrategyConfig,
-  scanWindow = 30
+  scanWindow = 30,
+  oiPoints: OpenInterestPoint[] = []
 ): StructuralSetup[] {
   const recent = candles.slice(-scanWindow);
   if (recent.length < 3) return [];
+
+  // OI 活跃度评估（使用 1-Sigma 阈值，比 Sweep 宽松）
+  let oiActivityBonus = 0;
+  if (config.fvgRequireOiActivity && oiPoints.length >= 10) {
+    const closePrices = candles.map(c => c.close);
+    const oiResult = detectOiCrash(oiPoints, closePrices, 50, config.fvgOiActivitySigmaThreshold);
+    
+    if (oiResult.isCrash) {
+      // OI 发生了 1-Sigma 级别的变化 → FVG 有能量支撑
+      oiActivityBonus = config.fvgOiActivityBonus;
+    } else if (Math.abs(oiResult.crashIndex) < 0.5) {
+      // OI 几乎没有变化（< 0.5-Sigma）→ FVG 可能是流动性真空噪音
+      oiActivityBonus = config.fvgOiInactivityPenalty;
+    }
+  }
 
   const results: StructuralSetup[] = [];
 
@@ -54,9 +72,9 @@ export function detectFvg(
       const riskDist = entryHigh - stopLossHint;
       const takeProfitHint = entryHigh + riskDist * config.minimumRiskReward;
 
-      // 评分: 基础 55 + 缺口相对 ATR 比值奖励（上限 100）
+      // 评分: 基础 55 + 缺口相对 ATR 比值奖励（上限 100） + OI 活跃度
       const gapRatio = gapSize / baselineAtr;
-      const structureScore = clamp(Math.round(55 + gapRatio * 30), 0, 100);
+      const structureScore = clamp(Math.round(55 + gapRatio * 30 + oiActivityBonus), 0, 100);
 
       results.push({
         timeframe,
@@ -92,7 +110,7 @@ export function detectFvg(
       const takeProfitHint = entryLow - riskDist * config.minimumRiskReward;
 
       const gapRatio = gapSize / baselineAtr;
-      const structureScore = clamp(Math.round(55 + gapRatio * 30), 0, 100);
+      const structureScore = clamp(Math.round(55 + gapRatio * 30 + oiActivityBonus), 0, 100);
 
       results.push({
         timeframe,

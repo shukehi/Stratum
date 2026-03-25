@@ -14,6 +14,8 @@ export type PositionStatus =
   | "closed_sl"
   | "closed_manual";
 
+export type ExecutionMode = "paper" | "live";
+
 /**
  * 开仓记录  (PHASE_10-B)
  *
@@ -48,4 +50,5 @@ export type OpenPosition = {
   closePrice?: number;
   pnlR?: number;      // 平仓后填充
   exchangeOrderId?: string; // TASK-P3-C: 实盘 API 执行记录
+  executionMode: ExecutionMode;
 };

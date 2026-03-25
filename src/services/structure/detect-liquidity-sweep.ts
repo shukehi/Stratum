@@ -41,33 +41,62 @@ export function detectSwingPoints(candles: Candle[], lookback = 3): SwingPoint[]
 }
 
 /**
- * Sweep 深度非线性评分（倒 U 型曲线）
+ * CVD 方向对齐评分（连续函数）
  *
- * sweepRatio（刺穿深度 / ATR）与信号质量的物理关系：
- *   < 0.3x ATR  → 深度不足：未触发足量止损，动能湮灭不充分 → 40分基础
- *   0.3–0.5x    → 过渡区：线性增长爬坡
- *   0.5–1.5x    → 最优区间：止损湮灭充分 + 价格能收回 → 80–100分
- *   1.5–2.5x    → 衰减区：深度过大，收回难度上升 → 线性下降
- *   > 2.5x ATR  → 危险区：可能已是结构翻转而非 Sweep → 强制降权
+ * 物理含义：
+ *   CVD 斜率代表主动力量的方向和强度。
+ *   斜率与 Sweep 方向一致 → 加分（主动力量确认）
+ *   斜率与 Sweep 方向背离 → 减分（主动力量反对）
+ *   幅度越大，评分影响越大（连续响应）
+ *
+ * @param cvdSlope       CVD 加速度斜率（正=bullish，负=bearish）
+ * @param sweepDirection Sweep 方向（"long"=看涨, "short"=看跌）
+ * @returns              评分调整值（正=加分，负=减分），范围约 [-25, +10]
  */
-export function scoreSweepDepth(sweepRatio: number): number {
-  if (sweepRatio < 0.3) {
-    return 40; // 深度不足
+export function computeCvdAlignmentScore(
+  cvdSlope: number,
+  sweepDirection: "long" | "short"
+): number {
+  // 对齐系数：slope 方向与 sweep方向一致时为正，反之为负
+  const alignmentSign = sweepDirection === "long" ? 1 : -1;
+  const effectiveSlope = cvdSlope * alignmentSign;
+  
+  if (effectiveSlope > 0) {
+    return Math.min(10, Math.round(effectiveSlope * 100));
   }
-  if (sweepRatio <= 0.5) {
-    // 0.3–0.5：爬坡段（40→80）
+  
+  const absSlope = Math.abs(effectiveSlope);
+  const penalty = Math.min(25, Math.round(absSlope * absSlope * 625));
+  return -penalty;
+}
+
+/**
+ * Sweep 深度非线性评分（倒 U 型曲线 — 自适应版）
+ *
+ * @param sweepRatio    刺穿深度 / ATR
+ * @param optimalUpper  最优区间上界（由 regime 决定，默认 1.5）
+ *
+ * 注意：optimalUpper 必须 > 0.5，否则最优区间退化。
+ * 实际配置最小值为 sweepOptimalUpperHighVol = 1.2，生产环境不会触发除零，
+ * 但加入防御检查以保证单元测试极端输入安全。
+ */
+export function scoreSweepDepth(sweepRatio: number, optimalUpper = 1.5): number {
+  const dangerStart = optimalUpper * 1.67;  // 危险区起始
+
+  if (sweepRatio < 0.3) return 40;           // 深度不足
+  if (sweepRatio <= 0.5) {                   // 爬坡段（40→80）
     return 40 + ((sweepRatio - 0.3) / 0.2) * 40;
   }
-  if (sweepRatio <= 1.5) {
-    // 0.5–1.5：最优区间（80→100）
-    return 80 + ((sweepRatio - 0.5) / 1.0) * 20;
+  if (sweepRatio <= optimalUpper) {           // 最优区间（80→100）
+    const span = optimalUpper - 0.5;
+    if (span <= 0) return 80;                 // 防御性：区间退化时返回基础分
+    return 80 + ((sweepRatio - 0.5) / span) * 20;
   }
-  if (sweepRatio <= 2.5) {
-    // 1.5–2.5：衰减段（100→60）
-    return 100 - ((sweepRatio - 1.5) / 1.0) * 40;
+  if (sweepRatio <= dangerStart) {            // 衰减段（100→60）
+    return 100 - ((sweepRatio - optimalUpper) / (dangerStart - optimalUpper)) * 40;
   }
-  // > 2.5：危险区（强制 ≤ 50，且越深越低）
-  return Math.max(20, 60 - (sweepRatio - 2.5) * 20);
+  // 危险区
+  return Math.max(20, 60 - (sweepRatio - dangerStart) * 20);
 }
 
 /**
@@ -83,7 +112,8 @@ export function detectLiquiditySweep(
   candles: Candle[],
   config: StrategyConfig,
   oiPoints: OpenInterestPoint[] = [],
-  sweepWindow = 5
+  sweepWindow = 5,
+  sweepOptimalUpper = 1.5
 ): StructuralSetup[] {
   if (candles.length < 10) return [];
 
@@ -135,10 +165,9 @@ export function detectLiquiditySweep(
                            : oiResult.mechanismType === "short_squeeze"    ? -15
                            : 0;
       
-      const cvdBonus = cvdAcc.direction === "bullish" ? 5
-                     : cvdAcc.direction === "bearish" ? -10 : 0;
+      const cvdBonus = computeCvdAlignmentScore(cvdAcc.cvdSlope, "long");
       
-      const depthScore = scoreSweepDepth(sweepRatio);
+      const depthScore = scoreSweepDepth(sweepRatio, sweepOptimalUpper);
       const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty + cvdBonus), 0, 100);
       const cvdReason = `CVD加速(${cvdAcc.direction}, slope=${cvdAcc.cvdSlope.toFixed(3)})`;
 
@@ -178,10 +207,9 @@ export function detectLiquiditySweep(
                            : oiResult.mechanismType === "long_liquidation" ? -15
                            : 0;
                            
-      const cvdBonus = cvdAcc.direction === "bearish" ? 5
-                     : cvdAcc.direction === "bullish" ? -10 : 0;
+      const cvdBonus = computeCvdAlignmentScore(cvdAcc.cvdSlope, "short");
                      
-      const depthScore = scoreSweepDepth(sweepRatio);
+      const depthScore = scoreSweepDepth(sweepRatio, sweepOptimalUpper);
       const structureScore = clamp(Math.round(depthScore + momentumBonus + mechanismBonus + directionPenalty + cvdBonus), 0, 100);
       const cvdReason = `CVD加速(${cvdAcc.direction}, slope=${cvdAcc.cvdSlope.toFixed(3)})`;
 

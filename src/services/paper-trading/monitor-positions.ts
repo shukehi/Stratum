@@ -3,6 +3,7 @@ import type { ExchangeClient } from "../../clients/exchange/ccxt-client.js";
 import type { OpenPosition } from "../../domain/position/open-position.js";
 import { getOpenPositions, closePosition, activateBreakEven } from "../positions/track-position.js";
 import { logger } from "../../app/logger.js";
+import { env } from "../../app/env.js";
 
 /**
  * 模拟交易仓位监控器 (V3 Physics + FSD Silent)
@@ -36,7 +37,7 @@ export async function monitorPositions(
   _notificationConfig?: any, // FSD Mode: 忽略通知配置
   closedAt: number = Date.now()
 ): Promise<MonitorResult> {
-  const openPositions = getOpenPositions(db).filter(p => p.symbol === symbol);
+  const openPositions = getOpenPositions(db, env.EXECUTION_MODE as "paper" | "live").filter(p => p.symbol === symbol);
 
   if (openPositions.length === 0) {
     return { symbol, currentPrice: 0, checked: 0, closed: 0, closedRecords: [] };

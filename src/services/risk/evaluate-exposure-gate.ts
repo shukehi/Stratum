@@ -3,7 +3,7 @@ import type { ReasonCode } from "../../domain/common/reason-code.js";
 import type { TradeCandidate } from "../../domain/signal/trade-candidate.js";
 import type { OpenPosition } from "../../domain/position/open-position.js";
 import type { MarketRegime } from "../../domain/regime/market-regime.js";
-import { applySignalDecay } from "../consensus/evaluate-consensus.js";
+import { applySignalDecay, getRegimeHalfLife } from "../consensus/evaluate-consensus.js";
 
 /**
  * 资本置换协议 (Capital Swapping Protocol - CSP)  (V3 - Physics First)
@@ -51,6 +51,16 @@ export function evaluateSwappingGate(
     };
   }
 
+  // ── TASK-V2-P2-A: 品种集中度保护 ────────────────────────────────────────────
+  const sameSymbolCount = openPositions.filter(p => p.symbol === candidate.symbol).length;
+  if (sameSymbolCount >= config.maxPositionsPerSymbol) {
+    return {
+      action: "block",
+      reasonCode: "PORTFOLIO_RISK_LIMIT",
+      reason: `品种集中度超限：${candidate.symbol} 已有 ${sameSymbolCount} 个持仓 (上限 ${config.maxPositionsPerSymbol})`
+    };
+  }
+
   // 1. 检查总体账户风险是否还有余量
   const hasGlobalBuffer = (portfolioOpenRiskPercent + config.riskPerTrade) <= config.maxPortfolioOpenRiskPercent;
   
@@ -83,7 +93,8 @@ export function evaluateSwappingGate(
     const SWAP_THRESHOLD_RATIO = baseThreshold + confidenceAdj;
 
     const positionAge = Date.now() - weakestPosition.openedAt;
-    const decayedPositionCvs = applySignalDecay(weakestPosition.capitalVelocityScore, positionAge);
+    const dynamicHalfLife = getRegimeHalfLife(currentRegime, config);
+    const decayedPositionCvs = applySignalDecay(weakestPosition.capitalVelocityScore, positionAge, dynamicHalfLife);
 
     if (candidate.capitalVelocityScore > decayedPositionCvs * SWAP_THRESHOLD_RATIO) {
       return { 

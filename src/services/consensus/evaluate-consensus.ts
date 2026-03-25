@@ -69,7 +69,8 @@ function computeCVS(
   participantAligned: boolean,
   rr: number,
   ctx: MarketContext,
-  config: StrategyConfig
+  config: StrategyConfig,
+  positionSizeUsd?: number
 ): number {
   // — 推力部分（不变）—
   let multiplier = 1.0;
@@ -89,6 +90,13 @@ function computeCVS(
 
   if (ctx.reasonCodes.includes("SESSION_LOW_LIQUIDITY_DISCOUNT")) {
     effectiveSlippage *= config.sessionSlippageMultiplier;
+  }
+
+  // — 市场冲击成本（新增）—
+  if (positionSizeUsd && positionSizeUsd > 0) {
+    const sizeRatio = positionSizeUsd / config.impactCostDailyVolumeUsd;
+    const impactCost = config.impactCostSensitivity * Math.pow(sizeRatio, 2);
+    effectiveSlippage += impactCost;
   }
 
   const frictionDenominator = 1 + effectiveSlippage * 100;
@@ -175,7 +183,13 @@ export function analyzeConsensus(
     // FSD / TASK-P2-C 修正：评价 TP 的物理流通性
     const reachability = input.equalLevels ? assessTpReachability(setup, input.equalLevels) : 1.0;
     
-    const cvs = computeCVS(setup, regimeAligned, pAligned, rr, ctx, config);
+    // 预估仓位规模
+    const entryMid = (setup.entryLow + setup.entryHigh) / 2;
+    const stopDist = Math.abs(entryMid - setup.stopLossHint);
+    const stopPct = stopDist / entryMid;
+    const approxPositionSizeUsd = stopPct > 0 ? (config.accountSizeUsd * config.riskPerTrade) / stopPct : 0;
+    
+    const cvs = computeCVS(setup, regimeAligned, pAligned, rr, ctx, config, approxPositionSizeUsd);
     const finalCvs = Math.round(cvs * reachability * 100) / 100;
 
     candidates.push({
@@ -224,4 +238,19 @@ export function applySignalDecay(
   // 下限保护：最多衰减到原始 CVS 的 20%（避免信号变为 0）
   const floor = cvs * 0.2;
   return Math.max(Math.round(decayed * 100) / 100, Math.round(floor * 100) / 100);
+}
+
+/**
+ * 根据市场状态获取动态半衰期
+ */
+export function getRegimeHalfLife(
+  regime: MarketRegime | undefined,
+  config: StrategyConfig
+): number {
+  return {
+    "trend":          config.signalHalfLifeTrendMs,
+    "range":          config.signalHalfLifeRangeMs,
+    "high-volatility": config.signalHalfLifeHighVolMs,
+    "event-driven":   config.signalHalfLifeEventMs,
+  }[regime ?? "range"] ?? config.signalHalfLifeRangeMs;
 }
