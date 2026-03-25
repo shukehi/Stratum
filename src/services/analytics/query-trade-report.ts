@@ -74,17 +74,17 @@ export type OverallStats = {
   totalR: number;
 };
 
-export function getOverallStats(db: Database.Database): OverallStats {
+export function getOverallStats(db: Database.Database, executionMode: "paper" | "live" = "paper"): OverallStats {
   const row = db.prepare(`
     SELECT
       (SELECT COUNT(*) FROM scan_logs) as total_scans,
       (SELECT COUNT(*) FROM candidates WHERE alert_status = 'sent') as total_signals_sent,
-      (SELECT COUNT(*) FROM positions WHERE status != 'open') as total_positions_closed,
-      (SELECT COUNT(*) FROM positions WHERE status = 'closed_tp') as wins,
-      (SELECT COUNT(*) FROM positions WHERE status = 'closed_sl') as losses,
-      (SELECT AVG(pnl_r) FROM positions WHERE status != 'open') as avg_pnl_r,
-      (SELECT SUM(pnl_r) FROM positions WHERE status != 'open') as total_r
-  `).get() as any;
+      (SELECT COUNT(*) FROM positions WHERE status != 'open' AND execution_mode = ?) as total_positions_closed,
+      (SELECT COUNT(*) FROM positions WHERE status = 'closed_tp' AND execution_mode = ?) as wins,
+      (SELECT COUNT(*) FROM positions WHERE status = 'closed_sl' AND execution_mode = ?) as losses,
+      (SELECT AVG(pnl_r) FROM positions WHERE status != 'open' AND execution_mode = ?) as avg_pnl_r,
+      (SELECT SUM(pnl_r) FROM positions WHERE status != 'open' AND execution_mode = ?) as total_r
+  `).get(executionMode, executionMode, executionMode, executionMode, executionMode) as any;
 
   const closed = row.total_positions_closed || 0;
   return {
@@ -99,7 +99,7 @@ export function getOverallStats(db: Database.Database): OverallStats {
   };
 }
 
-export function getWinRateByGrade(db: Database.Database): WinRateRow[] {
+export function getWinRateByGrade(db: Database.Database, executionMode: "paper" | "live" = "paper"): WinRateRow[] {
   const rows = db.prepare(`
     SELECT
       capital_velocity_score as score,
@@ -108,9 +108,10 @@ export function getWinRateByGrade(db: Database.Database): WinRateRow[] {
       AVG(pnl_r) as avgPnlR,
       SUM(pnl_r) as totalR
     FROM positions
+    WHERE execution_mode = ?
     GROUP BY capital_velocity_score
     ORDER BY score DESC
-  `).all() as any[];
+  `).all(executionMode) as any[];
 
   return rows.map(r => ({
     label: String(r.score),
@@ -121,7 +122,7 @@ export function getWinRateByGrade(db: Database.Database): WinRateRow[] {
   }));
 }
 
-export function getWinRateByDirection(db: Database.Database): WinRateRow[] {
+export function getWinRateByDirection(db: Database.Database, executionMode: "paper" | "live" = "paper"): WinRateRow[] {
   const rows = db.prepare(`
     SELECT
       direction as label,
@@ -130,8 +131,9 @@ export function getWinRateByDirection(db: Database.Database): WinRateRow[] {
       AVG(pnl_r) as avgPnlR,
       SUM(pnl_r) as totalR
     FROM positions
+    WHERE execution_mode = ?
     GROUP BY direction
-  `).all() as any[];
+  `).all(executionMode) as any[];
 
   return rows.map(r => ({
     label: r.label,
@@ -142,7 +144,7 @@ export function getWinRateByDirection(db: Database.Database): WinRateRow[] {
   }));
 }
 
-export function getWinRateByStructureType(db: Database.Database): WinRateRow[] {
+export function getWinRateByStructureType(db: Database.Database, executionMode: "paper" | "live" = "paper"): WinRateRow[] {
   const rows = db.prepare(`
     SELECT
       CASE WHEN structure_reason LIKE '%扫荡%' THEN 'Sweep' ELSE 'FVG' END as label,
@@ -151,8 +153,9 @@ export function getWinRateByStructureType(db: Database.Database): WinRateRow[] {
       AVG(pnl_r) as avgPnlR,
       SUM(pnl_r) as totalR
     FROM positions
+    WHERE execution_mode = ?
     GROUP BY label
-  `).all() as any[];
+  `).all(executionMode) as any[];
 
   return rows.map(r => ({
     label: r.label,
@@ -216,7 +219,7 @@ export function getRecentScanLogs(db: Database.Database, limit = 20): ScanLogRow
   }));
 }
 
-export function getOpenExposureByDirection(db: Database.Database): OpenExposureRow[] {
+export function getOpenExposureByDirection(db: Database.Database, executionMode: "paper" | "live" = "paper"): OpenExposureRow[] {
   return db.prepare(`
     SELECT
       direction as label,
@@ -224,9 +227,9 @@ export function getOpenExposureByDirection(db: Database.Database): OpenExposureR
       SUM(risk_amount) as openRiskAmount,
       SUM(account_risk_percent) as openRiskPercent
     FROM positions
-    WHERE status = 'open'
+    WHERE status = 'open' AND execution_mode = ?
     GROUP BY direction
-  `).all() as any[];
+  `).all(executionMode) as any[];
 }
 
 // ── 兼容性占位导出 ────────────────────────────────────────────────────────────

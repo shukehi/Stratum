@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { env } from "../app/env.js";
 import {
   getOverallStats,
   getWinRateByGrade,
@@ -32,7 +33,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   console.log(dim(`  ${fmtTime(Date.now())}`));
   console.log();
 
-  const s = getOverallStats(db);
+  const s = getOverallStats(db, env.EXECUTION_MODE as "paper" | "live");
 
   if (s.totalScans === 0) {
     console.log(dim("  暂无扫描记录，请先运行 pnpm dev 积累数据。"));
@@ -57,7 +58,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   // ── 按等级分析 ─────────────────────────────────────────────────────────────
   if (showGrade) {
     section("📈  按 CVS 动能分析");
-    const rows = getWinRateByGrade(db);
+    const rows = getWinRateByGrade(db, env.EXECUTION_MODE as "paper" | "live");
     if (rows.length === 0) {
       console.log(dim("  暂无数据"));
     } else {
@@ -71,7 +72,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   // ── 方向分析 ───────────────────────────────────────────────────────────────
   if (showDir) {
     section("↔️  按多/空方向分析");
-    const rows = getWinRateByDirection(db);
+    const rows = getWinRateByDirection(db, env.EXECUTION_MODE as "paper" | "live");
     printTable(
       ["方向", "笔数", "胜率", "平均R", "总R"],
       rows.map(winRateToRow)
@@ -81,7 +82,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   // ── 结构分析 ───────────────────────────────────────────────────────────────
   if (showStr) {
     section("🏗️  按结构类型分析");
-    const rows = getWinRateByStructureType(db);
+    const rows = getWinRateByStructureType(db, env.EXECUTION_MODE as "paper" | "live");
     printTable(
       ["结构", "笔数", "胜率", "平均R", "总R"],
       rows.map(winRateToRow)
@@ -104,7 +105,7 @@ export async function cmdReport(args: string[], db: Database.Database): Promise<
   // ── 风险暴露 ──────────────────────────────────────────────────────────────
   if (showRisk) {
     section("🛡️  当前风险暴露");
-    const exposures = getOpenExposureByDirection(db);
+    const exposures = getOpenExposureByDirection(db, env.EXECUTION_MODE as "paper" | "live");
     if (exposures.length === 0) {
       console.log(dim("  当前无持仓"));
     } else {
