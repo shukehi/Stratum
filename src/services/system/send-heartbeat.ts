@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import type { LiquiditySession } from "../../domain/market/market-context.js";
 import type { NotificationConfig } from "../alerting/send-notification.js";
 import { getOpenPositions } from "../positions/track-position.js";
+import { env } from "../../app/env.js";
 import { getOverallStats } from "../analytics/query-trade-report.js";
 import { logger } from "../../app/logger.js";
 import { hasNotificationChannel, sendTextNotification } from "../alerting/send-notification.js";
@@ -49,7 +50,7 @@ export async function sendHeartbeat(
 ): Promise<void> {
   const now = Date.now();
   const stats = getOverallStats(db);
-  const openPositions = getOpenPositions(db);
+  const openPositions = getOpenPositions(db, env.EXECUTION_MODE as "paper" | "live");
 
   const longCount  = openPositions.filter(p => p.direction === "long").length;
   const shortCount = openPositions.filter(p => p.direction === "short").length;

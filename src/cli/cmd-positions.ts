@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { getOpenPositions } from "../services/positions/track-position.js";
+import { env } from "../app/env.js";
 import { header, kv, fmtPrice, fmtTime, printTable, dim, green, red, yellow, bold, gray, HR } from "./fmt.js";
 
 /**
@@ -11,7 +12,7 @@ import { header, kv, fmtPrice, fmtTime, printTable, dim, green, red, yellow, bol
 export async function cmdPositions(db: Database.Database): Promise<void> {
   header("📂  当前模拟持仓");
 
-  const positions = getOpenPositions(db);
+  const positions = getOpenPositions(db, env.EXECUTION_MODE as "paper" | "live");
 
   if (positions.length === 0) {
     console.log(dim("  当前无持仓。"));

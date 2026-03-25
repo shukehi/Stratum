@@ -141,7 +141,7 @@ async function main(): Promise<void> {
           spotSymbol: env.SPOT_SYMBOL,
           getLastScanAt: () => lastScanAt,
           getCurrentSession: () => lastSession,
-          getOpenPositions: () => getOpenPositions(db),
+          getOpenPositions: () => getOpenPositions(db, env.EXECUTION_MODE as "paper" | "live"),
           accountSize: env.ACCOUNT_SIZE,
           fetchTotalEquity: async () => {
             const bal = await client.fetchBalance();
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
         spotSymbol: env.SPOT_SYMBOL,
         getLastScanAt: () => lastScanAt,
         getCurrentSession: () => lastSession,
-        getOpenPositions: () => getOpenPositions(db),
+        getOpenPositions: () => getOpenPositions(db, env.EXECUTION_MODE as "paper" | "live"),
         fetchTotalEquity: async () => {
           const bal = await client.fetchBalance();
           return bal.totalEquity;
